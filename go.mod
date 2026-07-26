@@ -1,5 +1,6 @@
 module github.com/aquasecurity/trivy
 
+go 1.23.5
 go 1.26.3
 
 require (

@@ -1,5 +1,6 @@
 # Changelog
 
+## [0.59.1](https://github.com/aquasecurity/trivy/compare/v0.59.0...v0.59.1) (2025-02-04)
 ## [0.71.0](https://github.com/aquasecurity/trivy/compare/v0.70.0...v0.71.0) (2026-06-01)
 
 
@@ -486,6 +487,9 @@
 
 ### Bug Fixes
 
+* **misconf:** do not log scanners when misconfig scanning is disabled [backport: release/v0.59] ([#8349](https://github.com/aquasecurity/trivy/issues/8349)) ([412c690](https://github.com/aquasecurity/trivy/commit/412c690924d4414ef6d8a5f37b293969bc245d32))
+* **python:** add `poetry` v2 support [backport: release/v0.59] ([#8335](https://github.com/aquasecurity/trivy/issues/8335)) ([1741fdd](https://github.com/aquasecurity/trivy/commit/1741fddbe07d166dffbfb9b6f768940e52d08487))
+* **sbom:** preserve OS packages from multiple SBOMs [backport: release/v0.59] ([#8333](https://github.com/aquasecurity/trivy/issues/8333)) ([3fd8e27](https://github.com/aquasecurity/trivy/commit/3fd8e2785b2b838327a80cdc8b489583c3664944))
 * **db:** fix case when 2 trivy-db were copied at the same time ([#8452](https://github.com/aquasecurity/trivy/issues/8452)) ([bb3cca6](https://github.com/aquasecurity/trivy/commit/bb3cca6018551e96fdd357563dc177215ca29bd4))
 * don't use `scope` for `trivy registry login` command ([#8393](https://github.com/aquasecurity/trivy/issues/8393)) ([8715e5d](https://github.com/aquasecurity/trivy/commit/8715e5d14a727667c2e62d6f7a4b5308a0323386))
 * **go:** merge nested flags into string for ldflags for Go binaries ([#8368](https://github.com/aquasecurity/trivy/issues/8368)) ([b675b06](https://github.com/aquasecurity/trivy/commit/b675b06e897aaf374e7b1262d4323060a8a62edb))

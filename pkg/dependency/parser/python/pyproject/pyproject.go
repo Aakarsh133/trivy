@@ -18,6 +18,7 @@ type PyProject struct {
 }
 
 type Project struct {
+	Dependencies Dependencies `toml:"dependencies"`
 	Dependencies         Dependencies            `toml:"dependencies"`
 	OptionalDependencies map[string]Dependencies `toml:"optional-dependencies"`
 }
@@ -44,6 +45,8 @@ type Dependencies struct {
 // `project.dependencies` (first priority) or `tool.poetry.dependencies` (if `project.dependencies` is missing)
 func (p PyProject) MainDeps() set.Set[string] {
 	deps := set.New[string]()
+	if p.Project.Dependencies.Set != nil {
+		deps.Append(p.Project.Dependencies.Items()...)
 	if p.Project.Dependencies.Set != nil || p.Project.OptionalDependencies != nil {
 		if p.Project.Dependencies.Set != nil {
 			deps.Append(p.Project.Dependencies.Items()...)
@@ -62,6 +65,8 @@ func (p PyProject) MainDeps() set.Set[string] {
 func (d *Dependencies) UnmarshalTOML(data any) error {
 	switch deps := data.(type) {
 	case map[string]any: // For Poetry v1
+		d.Set = set.New[string](lo.MapToSlice(deps, func(pkgName string, _ any) string {
+			return python.NormalizePkgName(pkgName)
 		d.Set = set.New(lo.MapToSlice(deps, func(pkgName string, _ any) string {
 			return python.NormalizePkgName(pkgName, true)
 		})...)

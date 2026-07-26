@@ -1,6 +1,8 @@
 package poetry
 
 import (
+	"slices"
+	"sort"
 	"context"
 	"slices"
 

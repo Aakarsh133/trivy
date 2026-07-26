@@ -57,6 +57,8 @@ func (a sbomAnalyzer) Analyze(ctx context.Context, input analyzer.AnalysisInput)
 		bom.Packages[i].FilePath = path.Join(input.FilePath, pkgInfo.FilePath)
 	}
 
+	// FilePath for apps with aggregatingTypes is empty.
+	// Set the SBOM file path as Application.FilePath to correctly overwrite applications when merging layers.
 	// There are cases when FilePath for Application is empty:
 	// - FilePath for apps with aggregatingTypes is empty.
 	// - Third party SBOM without Application component.
