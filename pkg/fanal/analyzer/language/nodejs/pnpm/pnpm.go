@@ -2,7 +2,6 @@ package pnpm
 
 import (
 	"context"
-	"errors"
 	"io"
 	"io/fs"
 	"os"
@@ -11,10 +10,11 @@ import (
 
 	"golang.org/x/xerrors"
 
-	"github.com/aquasecurity/trivy/pkg/dependency/parser/nodejs/packagejson"
+	"github.com/aquasecurity/trivy/pkg/dependency"
 	"github.com/aquasecurity/trivy/pkg/dependency/parser/nodejs/pnpm"
 	"github.com/aquasecurity/trivy/pkg/fanal/analyzer"
 	"github.com/aquasecurity/trivy/pkg/fanal/analyzer/language"
+	"github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/nodejs/license"
 	"github.com/aquasecurity/trivy/pkg/fanal/types"
 	"github.com/aquasecurity/trivy/pkg/log"
 	"github.com/aquasecurity/trivy/pkg/utils/fsutils"
@@ -28,36 +28,36 @@ func init() {
 const version = 2
 
 type pnpmAnalyzer struct {
-	logger            *log.Logger
-	packageJsonParser *packagejson.Parser
-	lockParser        language.Parser
+	logger     *log.Logger
+	lockParser language.Parser
+	license    *license.License
 }
 
-func newPnpmAnalyzer(_ analyzer.AnalyzerOptions) (analyzer.PostAnalyzer, error) {
+func newPnpmAnalyzer(opt analyzer.AnalyzerOptions) (analyzer.PostAnalyzer, error) {
 	return &pnpmAnalyzer{
-		logger:            log.WithPrefix("pnpm"),
-		packageJsonParser: packagejson.NewParser(),
-		lockParser:        pnpm.NewParser(),
+		logger:     log.WithPrefix("pnpm"),
+		lockParser: pnpm.NewParser(),
+		license:    license.NewLicense("pnpm", opt.LicenseScannerOption.ClassifierConfidenceLevel),
 	}, nil
 }
 
-func (a pnpmAnalyzer) PostAnalyze(_ context.Context, input analyzer.PostAnalysisInput) (*analyzer.AnalysisResult, error) {
+func (a pnpmAnalyzer) PostAnalyze(ctx context.Context, input analyzer.PostAnalysisInput) (*analyzer.AnalysisResult, error) {
 	var apps []types.Application
 
-	required := func(path string, d fs.DirEntry) bool {
-		return filepath.Base(path) == types.PnpmLock
+	required := func(path string, _ fs.DirEntry) bool {
+		return filepath.Base(path) == types.PnpmLock || input.FilePatterns.Match(path)
 	}
 
-	err := fsutils.WalkDir(input.FS, ".", required, func(filePath string, d fs.DirEntry, r io.Reader) error {
+	err := fsutils.WalkDir(input.FS, ".", required, func(filePath string, _ fs.DirEntry, r io.Reader) error {
 		// Find licenses
-		licenses, err := a.findLicenses(input.FS, filePath)
+		licenses, err := a.license.Traverse(input.FS, path.Join(path.Dir(filePath), "node_modules"))
 		if err != nil {
 			a.logger.Error("Unable to collect licenses", log.Err(err))
 			licenses = make(map[string][]string)
 		}
 
 		// Parse pnpm-lock.yaml
-		app, err := language.Parse(types.Pnpm, filePath, r, a.lockParser)
+		app, err := language.Parse(ctx, types.Pnpm, filePath, r, a.lockParser)
 		if err != nil {
 			return xerrors.Errorf("parse error: %w", err)
 		} else if app == nil {
@@ -65,8 +65,11 @@ func (a pnpmAnalyzer) PostAnalyze(_ context.Context, input analyzer.PostAnalysis
 		}
 
 		// Fill licenses
-		for i, lib := range app.Packages {
-			if l, ok := licenses[lib.ID]; ok {
+		for i, pkg := range app.Packages {
+			// We use snapshots for pnpm package IDs.
+			// But to match licenses, we need to use the ID-building logic as for `package.json` files.
+			id := dependency.ID(types.NodePkg, pkg.Name, pkg.Version)
+			if l, ok := licenses[id]; ok {
 				app.Packages[i].Licenses = l
 			}
 		}
@@ -106,37 +109,4 @@ func (a pnpmAnalyzer) Type() analyzer.Type {
 
 func (a pnpmAnalyzer) Version() int {
 	return version
-}
-
-func (a pnpmAnalyzer) findLicenses(fsys fs.FS, lockPath string) (map[string][]string, error) {
-	dir := path.Dir(lockPath)
-	root := path.Join(dir, "node_modules")
-	if _, err := fs.Stat(fsys, root); errors.Is(err, fs.ErrNotExist) {
-		a.logger.Info(`To collect the license information of packages, "pnpm install" needs to be performed beforehand`,
-			log.String("dir", root))
-		return nil, nil
-	}
-
-	// Parse package.json
-	required := func(path string, _ fs.DirEntry) bool {
-		return filepath.Base(path) == types.NpmPkg
-	}
-
-	// Traverse node_modules dir and find licenses
-	// Note that fs.FS is always slashed regardless of the platform,
-	// and path.Join should be used rather than filepath.Join.
-	licenses := make(map[string][]string)
-	err := fsutils.WalkDir(fsys, root, required, func(filePath string, d fs.DirEntry, r io.Reader) error {
-		pkg, err := a.packageJsonParser.Parse(r)
-		if err != nil {
-			return xerrors.Errorf("unable to parse %q: %w", filePath, err)
-		}
-
-		licenses[pkg.ID] = pkg.Licenses
-		return nil
-	})
-	if err != nil {
-		return nil, xerrors.Errorf("walk error: %w", err)
-	}
-	return licenses, nil
 }

@@ -13,16 +13,14 @@ import (
 	"unicode"
 
 	"github.com/bmatcuk/doublestar/v4"
-	"github.com/samber/lo"
 	"golang.org/x/xerrors"
 
 	"github.com/aquasecurity/trivy/pkg/log"
 	xio "github.com/aquasecurity/trivy/pkg/x/io"
+	xslices "github.com/aquasecurity/trivy/pkg/x/slices"
 )
 
-var (
-	PathSeparator = fmt.Sprintf("%c", os.PathSeparator)
-)
+var PathSeparator = fmt.Sprintf("%c", os.PathSeparator)
 
 func CacheDir() string {
 	cacheDir, err := os.UserCacheDir()
@@ -59,7 +57,7 @@ func IsExecutable(fileInfo os.FileInfo) bool {
 	}
 
 	// Check unpackaged file
-	if mode.Perm()&0111 != 0 {
+	if mode.Perm()&0o111 != 0 {
 		return true
 	}
 	return false
@@ -86,7 +84,7 @@ func IsBinary(content xio.ReadSeekerAt, fileSize int64) (bool, error) {
 }
 
 func CleanSkipPaths(skipPaths []string) []string {
-	return lo.Map(skipPaths, func(skipPath string, index int) string {
+	return xslices.Map(skipPaths, func(skipPath string) string {
 		skipPath = filepath.ToSlash(filepath.Clean(skipPath))
 		return strings.TrimLeft(skipPath, "/")
 	})

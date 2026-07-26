@@ -32,6 +32,7 @@ type Result struct {
 	regoRule         string
 	traces           []string
 	fsPath           string
+	renderedCause    RenderedCause
 }
 
 func (r Result) RegoNamespace() string {
@@ -99,6 +100,14 @@ func (r Result) Range() iacTypes.Range {
 
 func (r Result) Traces() []string {
 	return r.traces
+}
+
+type RenderedCause struct {
+	Raw string
+}
+
+func (r *Result) WithRenderedCause(cause RenderedCause) {
+	r.renderedCause = cause
 }
 
 func (r *Result) AbsolutePath(fsRoot string, metadata iacTypes.Metadata) string {
@@ -219,7 +228,7 @@ func getMetadataFromSource(source any) iacTypes.Metadata {
 	}
 
 	metaValue := reflect.ValueOf(source)
-	if metaValue.Kind() == reflect.Ptr {
+	if metaValue.Kind() == reflect.Pointer {
 		metaValue = metaValue.Elem()
 	}
 	metaVal := metaValue.FieldByName("Metadata")
@@ -258,17 +267,19 @@ func (r *Results) AddIgnored(source any, descriptions ...string) {
 }
 
 func (r *Results) Ignore(ignoreRules ignore.Rules, ignores map[string]ignore.Ignorer) {
-	for i, result := range *r {
+	for i := range *r {
+		result := &(*r)[i]
+		rule := result.Rule()
 		allIDs := []string{
-			result.Rule().LongID(),
-			result.Rule().AVDID,
-			strings.ToLower(result.Rule().AVDID),
-			result.Rule().ShortCode,
+			rule.ID,
+			rule.CanonicalID(),
+			rule.AVDID,
+			rule.ShortCode,
 		}
-		allIDs = append(allIDs, result.Rule().Aliases...)
+		allIDs = append(allIDs, rule.Aliases...)
 
 		if ignoreRules.Ignore(result.Metadata(), allIDs, ignores) {
-			(*r)[i].OverrideStatus(StatusIgnored)
+			result.OverrideStatus(StatusIgnored)
 		}
 	}
 }

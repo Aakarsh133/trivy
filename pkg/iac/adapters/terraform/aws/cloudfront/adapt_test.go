@@ -44,27 +44,22 @@ func Test_adaptDistribution(t *testing.T) {
 			}
 `,
 			expected: cloudfront.Distribution{
-				Metadata: iacTypes.NewTestMetadata(),
-				WAFID:    iacTypes.String("waf_id", iacTypes.NewTestMetadata()),
+				WAFID: iacTypes.StringTest("waf_id"),
 				Logging: cloudfront.Logging{
-					Metadata: iacTypes.NewTestMetadata(),
-					Bucket:   iacTypes.String("mylogs.s3.amazonaws.com", iacTypes.NewTestMetadata()),
+					Bucket: iacTypes.StringTest("mylogs.s3.amazonaws.com"),
 				},
 				DefaultCacheBehaviour: cloudfront.CacheBehaviour{
-					Metadata:             iacTypes.NewTestMetadata(),
-					ViewerProtocolPolicy: iacTypes.String("redirect-to-https", iacTypes.NewTestMetadata()),
+					ViewerProtocolPolicy: iacTypes.StringTest("redirect-to-https"),
 				},
 				OrdererCacheBehaviours: []cloudfront.CacheBehaviour{
 					{
-						Metadata:             iacTypes.NewTestMetadata(),
-						ViewerProtocolPolicy: iacTypes.String("redirect-to-https", iacTypes.NewTestMetadata()),
+						ViewerProtocolPolicy: iacTypes.StringTest("redirect-to-https"),
 					},
 				},
 				ViewerCertificate: cloudfront.ViewerCertificate{
-					Metadata:                     iacTypes.NewTestMetadata(),
-					MinimumProtocolVersion:       iacTypes.String("TLSv1.2_2021", iacTypes.NewTestMetadata()),
-					CloudfrontDefaultCertificate: iacTypes.Bool(true, iacTypes.NewTestMetadata()),
-					SSLSupportMethod:             iacTypes.String("sni-only", iacTypes.NewTestMetadata()),
+					MinimumProtocolVersion:       iacTypes.StringTest("TLSv1.2_2021"),
+					CloudfrontDefaultCertificate: iacTypes.BoolTest(true),
+					SSLSupportMethod:             iacTypes.StringTest("sni-only"),
 				},
 			},
 		},
@@ -75,20 +70,11 @@ func Test_adaptDistribution(t *testing.T) {
 			}
 `,
 			expected: cloudfront.Distribution{
-				Metadata: iacTypes.NewTestMetadata(),
-				WAFID:    iacTypes.String("", iacTypes.NewTestMetadata()),
-				Logging: cloudfront.Logging{
-					Metadata: iacTypes.NewTestMetadata(),
-					Bucket:   iacTypes.String("", iacTypes.NewTestMetadata()),
-				},
-				DefaultCacheBehaviour: cloudfront.CacheBehaviour{
-					Metadata:             iacTypes.NewTestMetadata(),
-					ViewerProtocolPolicy: iacTypes.String("", iacTypes.NewTestMetadata()),
-				},
+				Logging:               cloudfront.Logging{},
+				DefaultCacheBehaviour: cloudfront.CacheBehaviour{},
 
 				ViewerCertificate: cloudfront.ViewerCertificate{
-					Metadata:               iacTypes.NewTestMetadata(),
-					MinimumProtocolVersion: iacTypes.String("TLSv1", iacTypes.NewTestMetadata()),
+					MinimumProtocolVersion: iacTypes.StringTest("TLSv1"),
 				},
 			},
 		},
@@ -99,6 +85,99 @@ func Test_adaptDistribution(t *testing.T) {
 			modules := tftestutil.CreateModulesFromSource(t, test.terraform, ".tf")
 			adapted := adaptDistribution(modules.GetBlocks()[0])
 			testutil.AssertDefsecEqual(t, test.expected, adapted)
+		})
+	}
+}
+
+func Test_adaptDistributionV2(t *testing.T) {
+	tests := []struct {
+		name      string
+		terraform string
+		expected  cloudfront.Distribution
+	}{
+		{
+			name: "v2 logging configured",
+			terraform: `
+			resource "aws_cloudfront_distribution" "example" {}
+
+			resource "aws_cloudwatch_log_delivery_source" "example" {
+				log_type     = "ACCESS_LOGS"
+				resource_arn = aws_cloudfront_distribution.example.arn
+			}
+
+			resource "aws_cloudwatch_log_delivery" "example" {
+				delivery_source_name = aws_cloudwatch_log_delivery_source.example.name
+			}
+`,
+			expected: cloudfront.Distribution{
+				Logging: cloudfront.Logging{
+					V2: cloudfront.LoggingV2{
+						Enabled: iacTypes.BoolTest(true),
+					},
+				},
+				DefaultCacheBehaviour: cloudfront.CacheBehaviour{},
+				ViewerCertificate: cloudfront.ViewerCertificate{
+					MinimumProtocolVersion: iacTypes.StringTest("TLSv1"),
+				},
+			},
+		},
+		{
+			name: "v2 logging source exists but no delivery",
+			terraform: `
+			resource "aws_cloudfront_distribution" "example" {}
+
+			resource "aws_cloudwatch_log_delivery_source" "example" {
+				log_type     = "ACCESS_LOGS"
+				resource_arn = aws_cloudfront_distribution.example.arn
+			}
+`,
+			expected: cloudfront.Distribution{
+				Logging: cloudfront.Logging{
+					V2: cloudfront.LoggingV2{
+						Enabled: iacTypes.BoolTest(false),
+					},
+				},
+				DefaultCacheBehaviour: cloudfront.CacheBehaviour{},
+				ViewerCertificate: cloudfront.ViewerCertificate{
+					MinimumProtocolVersion: iacTypes.StringTest("TLSv1"),
+				},
+			},
+		},
+
+		{
+			name: "v2 logging with non-access log_type",
+			terraform: `
+            resource "aws_cloudfront_distribution" "example" {}
+
+            resource "aws_cloudwatch_log_delivery_source" "example" {
+                log_type     = "ERROR_LOGS"
+                resource_arn = aws_cloudfront_distribution.example.arn
+            }
+
+            resource "aws_cloudwatch_log_delivery" "example" {
+                delivery_source_name = aws_cloudwatch_log_delivery_source.example.name
+            }
+`,
+			expected: cloudfront.Distribution{
+				Logging: cloudfront.Logging{
+					V2: cloudfront.LoggingV2{
+						Enabled: iacTypes.BoolTest(false),
+					},
+				},
+				DefaultCacheBehaviour: cloudfront.CacheBehaviour{},
+				ViewerCertificate: cloudfront.ViewerCertificate{
+					MinimumProtocolVersion: iacTypes.StringTest("TLSv1"),
+				},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			modules := tftestutil.CreateModulesFromSource(t, test.terraform, ".tf")
+			adapted := Adapt(modules)
+			require.Len(t, adapted.Distributions, 1)
+			testutil.AssertDefsecEqual(t, test.expected, adapted.Distributions[0])
 		})
 	}
 }

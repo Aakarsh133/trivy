@@ -22,6 +22,7 @@ func TestApplyLayers(t *testing.T) {
 			inputLayers: []types.BlobInfo{
 				{
 					SchemaVersion: 1,
+					Size:          1000,
 					Digest:        "sha256:932da51564135c98a49a34a193d6cd363d8fa4184d957fde16c9d8527b3f3b02",
 					DiffID:        "sha256:a187dde48cd289ac374ad8539930628314bc581a481cdb41409c9289419ddb72",
 					OS: types.OS{
@@ -76,8 +77,10 @@ func TestApplyLayers(t *testing.T) {
 				},
 				{
 					SchemaVersion: 1,
+					Size:          2000,
 					Digest:        "sha256:24df0d4e20c0f42d3703bf1f1db2bdd77346c7956f74f423603d651e8e5ae8a7",
 					DiffID:        "sha256:aad63a9339440e7c3e1fff2b988991b9bfb81280042fa7f39a5e327023056819",
+					WhiteoutFiles: []string{"app/composer.lock"},
 					PackageInfos: []types.PackageInfo{
 						{
 							FilePath: "lib/apk/db/installed",
@@ -96,10 +99,10 @@ func TestApplyLayers(t *testing.T) {
 							},
 						},
 					},
-					WhiteoutFiles: []string{"app/composer.lock"},
 				},
 				{
 					SchemaVersion: 1,
+					Size:          3000,
 					Digest:        "sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4",
 					DiffID:        "sha256:a187dde48cd289ac374ad8539930628314bc581a481cdb41409c9289419ddb72",
 					PackageInfos: []types.PackageInfo{
@@ -255,10 +258,11 @@ func TestApplyLayers(t *testing.T) {
 			},
 		},
 		{
-			name: "happy path with duplicate of debian packages",
+			name: "happy path with duplicate packages",
 			inputLayers: []types.BlobInfo{
 				{
 					SchemaVersion: 2,
+					Size:          1000,
 					DiffID:        "sha256:96e320b34b5478d8b369ca43ffaa88ff6dd9499ec72b792ca21b1e8b0c55670f",
 					PackageInfos: []types.PackageInfo{
 						{
@@ -272,10 +276,41 @@ func TestApplyLayers(t *testing.T) {
 								},
 							},
 						},
+						{
+							FilePath: "foo/socat-1.7.3.2-2.el7.x86_64.rpm",
+							Packages: types.Packages{
+								{
+									Name:       "socat",
+									Version:    "1.7.3.2",
+									Release:    "2.el7",
+									Arch:       "x86_64",
+									SrcName:    "socat",
+									SrcVersion: "1.7.3.2",
+									SrcRelease: "2.el7",
+									FilePath:   "foo/socat-1.7.3.2-2.el7.x86_64.rpm",
+								},
+							},
+						},
+						{
+							FilePath: "bar/socat-1.7.3.2-2.el7.x86_64.rpm",
+							Packages: types.Packages{
+								{
+									Name:       "socat",
+									Version:    "1.7.3.2",
+									Release:    "2.el7",
+									Arch:       "x86_64",
+									SrcName:    "socat",
+									SrcVersion: "1.7.3.2",
+									SrcRelease: "2.el7",
+									FilePath:   "bar/socat-1.7.3.2-2.el7.x86_64.rpm",
+								},
+							},
+						},
 					},
 				},
 				{
 					SchemaVersion: 2,
+					Size:          2000,
 					DiffID:        "sha256:5e087d956f3e62bd034dd0712bc4cbef8fda55fba0b11a7d0564f294887c7079",
 					PackageInfos: []types.PackageInfo{
 						{
@@ -304,6 +339,38 @@ func TestApplyLayers(t *testing.T) {
 						},
 						Layer: types.Layer{
 							DiffID: "sha256:96e320b34b5478d8b369ca43ffaa88ff6dd9499ec72b792ca21b1e8b0c55670f",
+						},
+					},
+					{
+						Name:       "socat",
+						Version:    "1.7.3.2",
+						Release:    "2.el7",
+						Arch:       "x86_64",
+						SrcName:    "socat",
+						SrcVersion: "1.7.3.2",
+						SrcRelease: "2.el7",
+						FilePath:   "bar/socat-1.7.3.2-2.el7.x86_64.rpm",
+						Layer: types.Layer{
+							DiffID: "sha256:96e320b34b5478d8b369ca43ffaa88ff6dd9499ec72b792ca21b1e8b0c55670f",
+						},
+						Identifier: types.PkgIdentifier{
+							UID: "bfb68335f6284b36",
+						},
+					},
+					{
+						Name:       "socat",
+						Version:    "1.7.3.2",
+						Release:    "2.el7",
+						Arch:       "x86_64",
+						SrcName:    "socat",
+						SrcVersion: "1.7.3.2",
+						SrcRelease: "2.el7",
+						FilePath:   "foo/socat-1.7.3.2-2.el7.x86_64.rpm",
+						Layer: types.Layer{
+							DiffID: "sha256:96e320b34b5478d8b369ca43ffaa88ff6dd9499ec72b792ca21b1e8b0c55670f",
+						},
+						Identifier: types.PkgIdentifier{
+							UID: "4d8db4fac0caf460",
 						},
 					},
 				},
@@ -421,6 +488,7 @@ func TestApplyLayers(t *testing.T) {
 			inputLayers: []types.BlobInfo{
 				{
 					SchemaVersion: 1,
+					Size:          1000,
 					Digest:        "sha256:932da51564135c98a49a34a193d6cd363d8fa4184d957fde16c9d8527b3f3b02",
 					DiffID:        "sha256:a187dde48cd289ac374ad8539930628314bc581a481cdb41409c9289419ddb72",
 					OS: types.OS{
@@ -430,6 +498,7 @@ func TestApplyLayers(t *testing.T) {
 				},
 				{
 					SchemaVersion: 1,
+					Size:          2000,
 					Digest:        "sha256:24df0d4e20c0f42d3703bf1f1db2bdd77346c7956f74f423603d651e8e5ae8a7",
 					DiffID:        "sha256:aad63a9339440e7c3e1fff2b988991b9bfb81280042fa7f39a5e327023056819",
 					OS: types.OS{
@@ -451,6 +520,7 @@ func TestApplyLayers(t *testing.T) {
 			inputLayers: []types.BlobInfo{
 				{
 					SchemaVersion: 1,
+					Size:          1000,
 					Digest:        "sha256:932da51564135c98a49a34a193d6cd363d8fa4184d957fde16c9d8527b3f3b02",
 					DiffID:        "sha256:a187dde48cd289ac374ad8539930628314bc581a481cdb41409c9289419ddb72",
 					OS: types.OS{
@@ -497,8 +567,13 @@ func TestApplyLayers(t *testing.T) {
 				},
 				{
 					SchemaVersion: 1,
+					Size:          2000,
 					Digest:        "sha256:24df0d4e20c0f42d3703bf1f1db2bdd77346c7956f74f423603d651e8e5ae8a7",
 					DiffID:        "sha256:aad63a9339440e7c3e1fff2b988991b9bfb81280042fa7f39a5e327023056819",
+					WhiteoutFiles: []string{
+						"app/composer.lock",
+						"var/lib/gems/2.5.0/specifications/activesupport-6.0.2.1.gemspec",
+					},
 					Applications: []types.Application{
 						{
 							Type:     types.Bundler,
@@ -524,10 +599,6 @@ func TestApplyLayers(t *testing.T) {
 								},
 							},
 						},
-					},
-					WhiteoutFiles: []string{
-						"app/composer.lock",
-						"var/lib/gems/2.5.0/specifications/activesupport-6.0.2.1.gemspec",
 					},
 				},
 			},
@@ -605,6 +676,7 @@ func TestApplyLayers(t *testing.T) {
 			inputLayers: []types.BlobInfo{
 				{
 					SchemaVersion: 2,
+					Size:          1000,
 					Digest:        "sha256:932da51564135c98a49a34a193d6cd363d8fa4184d957fde16c9d8527b3f3b02",
 					DiffID:        "sha256:a187dde48cd289ac374ad8539930628314bc581a481cdb41409c9289419ddb72",
 					CreatedBy:     "Line_1",
@@ -639,6 +711,7 @@ func TestApplyLayers(t *testing.T) {
 				},
 				{
 					SchemaVersion: 2,
+					Size:          2000,
 					Digest:        "sha256:24df0d4e20c0f42d3703bf1f1db2bdd77346c7956f74f423603d651e8e5ae8a7",
 					DiffID:        "sha256:aad63a9339440e7c3e1fff2b988991b9bfb81280042fa7f39a5e327023056819",
 					CreatedBy:     "Line_2",
@@ -694,6 +767,7 @@ func TestApplyLayers(t *testing.T) {
 				},
 				{
 					SchemaVersion: 2,
+					Size:          3000,
 					Digest:        "sha256:932da51564135c98a49a34a193d6cd363d8fa4184d957fde16c9d8527b3f3b02",
 					DiffID:        "sha256:a187dde48cd289ac374ad8539930628314bc581a481cdb41409c9289419ddb72",
 					CreatedBy:     "Line_3",
@@ -769,6 +843,7 @@ func TestApplyLayers(t *testing.T) {
 			inputLayers: []types.BlobInfo{
 				{
 					SchemaVersion: 1,
+					Size:          1000,
 					Digest:        "sha256:24df0d4e20c0f42d3703bf1f1db2bdd77346c7956f74f423603d651e8e5ae8a7",
 					DiffID:        "sha256:aad63a9339440e7c3e1fff2b988991b9bfb81280042fa7f39a5e327023056819",
 					OS: types.OS{
@@ -812,8 +887,10 @@ func TestApplyLayers(t *testing.T) {
 				},
 				{
 					SchemaVersion: 1,
+					Size:          2000,
 					Digest:        "sha256:932da51564135c98a49a34a193d6cd363d8fa4184d957fde16c9d8527b3f3b02",
 					DiffID:        "sha256:a187dde48cd289ac374ad8539930628314bc581a481cdb41409c9289419ddb72",
+					OpaqueDirs:    []string{"app"},
 					PackageInfos: []types.PackageInfo{
 						{
 							FilePath: "var/lib/dpkg/status.d/libc",
@@ -836,7 +913,6 @@ func TestApplyLayers(t *testing.T) {
 							PkgName: "libc",
 						},
 					},
-					OpaqueDirs: []string{"app"},
 				},
 			},
 			want: types.ArtifactDetail{
@@ -903,6 +979,7 @@ func TestApplyLayers(t *testing.T) {
 			inputLayers: []types.BlobInfo{
 				{
 					SchemaVersion: 2,
+					Size:          1000,
 					DiffID:        "sha256:cdd7c73923174e45ea648d66996665c288e1b17a0f45efdbeca860f6dafdf731",
 					OS: types.OS{
 						Family: "ubuntu",
@@ -933,6 +1010,7 @@ func TestApplyLayers(t *testing.T) {
 				// Install `curl`
 				{
 					SchemaVersion: 2,
+					Size:          2000,
 					DiffID:        "sha256:faf30fa9c41c10f93b3b134d7b2c16e07753320393e020c481f0c97d10db067d",
 					PackageInfos: []types.PackageInfo{
 						{
@@ -971,6 +1049,7 @@ func TestApplyLayers(t *testing.T) {
 				// Upgrade `apt`
 				{
 					SchemaVersion: 2,
+					Size:          3000,
 					DiffID:        "sha256:440e26edc0eb9b4fee6e1d40d8af9eb59500d38e25edfc5d5302c55f59394c1e",
 					PackageInfos: []types.PackageInfo{
 						{
@@ -1008,6 +1087,7 @@ func TestApplyLayers(t *testing.T) {
 				// Remove curl
 				{
 					SchemaVersion: 2,
+					Size:          4000,
 					DiffID:        "sha256:cb04e1d437de723d8d04bc7df89dc42271530c5f8ea1724c6072e3f0e7d6d38a",
 					WhiteoutFiles: []string{
 						"usr/bin/curl",
@@ -1085,6 +1165,7 @@ func TestApplyLayers(t *testing.T) {
 			inputLayers: []types.BlobInfo{
 				{
 					SchemaVersion: 1,
+					Size:          1000,
 					Digest:        "sha256:24df0d4e20c0f42d3703bf1f1db2bdd77346c7956f74f423603d651e8e5ae8a7",
 					DiffID:        "sha256:aad63a9339440e7c3e1fff2b988991b9bfb81280042fa7f39a5e327023056819",
 					Applications: []types.Application{
@@ -1102,6 +1183,7 @@ func TestApplyLayers(t *testing.T) {
 				},
 				{
 					SchemaVersion: 1,
+					Size:          2000,
 					Digest:        "sha256:932da51564135c98a49a34a193d6cd363d8fa4184d957fde16c9d8527b3f3b02",
 					DiffID:        "sha256:a187dde48cd289ac374ad8539930628314bc581a481cdb41409c9289419ddb72",
 					OpaqueDirs:    []string{"app/"},
@@ -1114,6 +1196,7 @@ func TestApplyLayers(t *testing.T) {
 			inputLayers: []types.BlobInfo{
 				{
 					SchemaVersion: 1,
+					Size:          1000,
 					Digest:        "sha256:24df0d4e20c0f42d3703bf1f1db2bdd77346c7956f74f423603d651e8e5ae8a7",
 					DiffID:        "sha256:aad63a9339440e7c3e1fff2b988991b9bfb81280042fa7f39a5e327023056819",
 					OS: types.OS{
@@ -1135,6 +1218,7 @@ func TestApplyLayers(t *testing.T) {
 				},
 				{
 					SchemaVersion: 1,
+					Size:          2000,
 					Digest:        "sha256:932da51564135c98a49a34a193d6cd363d8fa4184d957fde16c9d8527b3f3b02",
 					DiffID:        "sha256:a187dde48cd289ac374ad8539930628314bc581a481cdb41409c9289419ddb72",
 					BuildInfo: &types.BuildInfo{
@@ -1163,6 +1247,7 @@ func TestApplyLayers(t *testing.T) {
 				},
 				{
 					SchemaVersion: 1,
+					Size:          3000,
 					Digest:        "sha256:a64e5f34c33ed4c5121498e721e24d95dae2c9599bee4aa6d07850702b401406",
 					DiffID:        "sha256:0abd3f2c73de6f02e033f410590111f9339b9500dc07270234f283f2d9a2694b",
 					BuildInfo: &types.BuildInfo{
@@ -1172,6 +1257,7 @@ func TestApplyLayers(t *testing.T) {
 				},
 				{
 					SchemaVersion: 1,
+					Size:          4000,
 					Digest:        "sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4",
 					DiffID:        "sha256:a187dde48cd289ac374ad8539930628314bc581a481cdb41409c9289419ddb72",
 					PackageInfos: []types.PackageInfo{
@@ -1296,10 +1382,77 @@ func TestApplyLayers(t *testing.T) {
 			},
 		},
 		{
+			name: "SBOM generated by trivy rootfs preserves package-level BuildInfo",
+			inputLayers: []types.BlobInfo{
+				{
+					SchemaVersion: 1,
+					PackageInfos: []types.PackageInfo{
+						{
+							FilePath: "var/lib/rpm/Packages",
+							Packages: types.Packages{
+								{
+									Name:    "openssl",
+									Version: "1.2.3",
+									Release: "4",
+									// pkg.Layer is empty: packages in SBOM files do not contain
+									// layer information (e.g. SBOMs generated via trivy rootfs).
+									// BuildInfo is already set from the SBOM content sets.
+									BuildInfo: &types.BuildInfo{
+										ContentSets: []string{
+											"rhel-8-for-x86_64-baseos-eus-rpms__8_DOT_4",
+										},
+									},
+								},
+							},
+						},
+					},
+					OS: types.OS{
+						Family: "redhat",
+						Name:   "8",
+					},
+				},
+			},
+			want: types.ArtifactDetail{
+				OS: types.OS{
+					Family: "redhat",
+					Name:   "8",
+				},
+				Packages: types.Packages{
+					{
+						Name:    "openssl",
+						Version: "1.2.3",
+						Release: "4",
+						Identifier: types.PkgIdentifier{
+							UID: "d56a873f2b8d0fae",
+							PURL: &packageurl.PackageURL{
+								Type:      packageurl.TypeRPM,
+								Namespace: "redhat",
+								Name:      "openssl",
+								Version:   "1.2.3-4",
+								Qualifiers: packageurl.Qualifiers{
+									{
+										Key:   "distro",
+										Value: "redhat-8",
+									},
+								},
+							},
+						},
+						// BuildInfo must be preserved, not overwritten with nil.
+						BuildInfo: &types.BuildInfo{
+							ContentSets: []string{
+								"rhel-8-for-x86_64-baseos-eus-rpms__8_DOT_4",
+							},
+						},
+					},
+				},
+			},
+		},
+		{
 			name: "same package but different file path", // different hashes
 			inputLayers: []types.BlobInfo{
 				{
 					SchemaVersion: 1,
+					Size:          1000,
 					Digest:        "sha256:932da51564135c98a49a34a193d6cd363d8fa4184d957fde16c9d8527b3f3b02",
 					DiffID:        "sha256:a187dde48cd289ac374ad8539930628314bc581a481cdb41409c9289419ddb72",
 					Applications: []types.Application{
@@ -1375,6 +1528,142 @@ func TestApplyLayers(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "custom resource origin layer lookup",
+			inputLayers: []types.BlobInfo{
+				{
+					SchemaVersion: 1,
+					Digest:        "sha256:932da51564135c98a49a34a193d6cd363d8fa4184d957fde16c9d8527b3f3b02",
+					DiffID:        "sha256:a187dde48cd289ac374ad8539930628314bc581a481cdb41409c9289419ddb72",
+					CustomResources: []types.CustomResource{
+						{
+							Type:     "spring4shell",
+							FilePath: "app.jar",
+							Data:     "v1",
+						},
+					},
+				},
+				{
+					// Different Type, same FilePath — must not match spring4shell/app.jar lookup
+					SchemaVersion: 1,
+					Digest:        "sha256:7f8e9d0c1b2a394857463524130211009f8e7d6c5b4a39281716151413121110",
+					DiffID:        "sha256:1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f80",
+					CustomResources: []types.CustomResource{
+						{
+							Type:     "log4shell",
+							FilePath: "app.jar",
+							Data:     "other-type",
+						},
+					},
+				},
+				{
+					// Different FilePath, same Type — must not match spring4shell/app.jar lookup
+					SchemaVersion: 1,
+					Digest:        "sha256:8e9f0d1c2b3a4958675746352413221100af9e8d7c6b5a49392827262524232221",
+					DiffID:        "sha256:2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809",
+					CustomResources: []types.CustomResource{
+						{
+							Type:     "spring4shell",
+							FilePath: "other.jar",
+							Data:     "other-path",
+						},
+					},
+				},
+				{
+					SchemaVersion: 1,
+					Digest:        "sha256:dffd9992ca398466a663c87c92cfea2a2db0ae0cf33fcb99da60eec52addbfc5",
+					DiffID:        "sha256:aad63a9339440e7c3e1fff2b988991b9bfb81280042fa7f39a5e327023056819",
+					CustomResources: []types.CustomResource{
+						{
+							Type:     "spring4shell",
+							FilePath: "app.jar",
+							Data:     "v2",
+						},
+					},
+				},
+			},
+			want: types.ArtifactDetail{
+				CustomResources: []types.CustomResource{
+					{
+						Type:     "log4shell",
+						FilePath: "app.jar",
+						Layer: types.Layer{
+							Digest: "sha256:7f8e9d0c1b2a394857463524130211009f8e7d6c5b4a39281716151413121110",
+							DiffID: "sha256:1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f80",
+						},
+						Data: "other-type",
+					},
+					{
+						Type:     "spring4shell",
+						FilePath: "app.jar",
+						Layer: types.Layer{
+							Digest: "sha256:932da51564135c98a49a34a193d6cd363d8fa4184d957fde16c9d8527b3f3b02",
+							DiffID: "sha256:a187dde48cd289ac374ad8539930628314bc581a481cdb41409c9289419ddb72",
+						},
+						Data: "v2",
+					},
+					{
+						Type:     "spring4shell",
+						FilePath: "other.jar",
+						Layer: types.Layer{
+							Digest: "sha256:8e9f0d1c2b3a4958675746352413221100af9e8d7c6b5a49392827262524232221",
+							DiffID: "sha256:2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809",
+						},
+						Data: "other-path",
+					},
+				},
+			},
+		},
+		{
+			// Duplicate packages with different PURL namespaces, prefer OS-matching PURL
+			name: "prefer OS-matching PURL during deduplication",
+			inputLayers: []types.BlobInfo{
+				{
+					SchemaVersion: 2,
+					OS:            types.OS{Family: "chainguard", Name: "20230201"},
+					PackageInfos: []types.PackageInfo{
+						{
+							FilePath: "lib/apk/db/installed",
+							Packages: types.Packages{
+								{Name: "libcrypto3", Version: "3.0.0"}, // No PURL - will get chainguard
+								{
+									Name:    "libcrypto3",
+									Version: "3.0.0",
+									Identifier: types.PkgIdentifier{
+										PURL: &packageurl.PackageURL{
+											Type:       packageurl.TypeApk,
+											Namespace:  "wolfi", // Mismatched
+											Name:       "libcrypto3",
+											Version:    "3.0.0",
+											Qualifiers: packageurl.Qualifiers{{Key: "distro", Value: "wolfi"}},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			want: types.ArtifactDetail{
+				OS: types.OS{Family: "chainguard", Name: "20230201"},
+				Packages: types.Packages{
+					{
+						Name:    "libcrypto3",
+						Version: "3.0.0",
+						Identifier: types.PkgIdentifier{
+							UID: "bdca9f208c0174a0",
+							PURL: &packageurl.PackageURL{
+								Type:       packageurl.TypeApk,
+								Namespace:  "chainguard", // Matches OS
+								Name:       "libcrypto3",
+								Version:    "3.0.0",
+								Qualifiers: packageurl.Qualifiers{{Key: "distro", Value: "20230201"}},
+							},
+						},
+					},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1387,6 +1676,12 @@ func TestApplyLayers(t *testing.T) {
 			for _, app := range got.Applications {
 				sort.Sort(app.Packages)
 			}
+			sort.Slice(got.CustomResources, func(i, j int) bool {
+				if got.CustomResources[i].FilePath == got.CustomResources[j].FilePath {
+					return got.CustomResources[i].Type < got.CustomResources[j].Type
+				}
+				return got.CustomResources[i].FilePath < got.CustomResources[j].FilePath
+			})
 			assert.Equal(t, tt.want, got, tt.name)
 		})
 	}

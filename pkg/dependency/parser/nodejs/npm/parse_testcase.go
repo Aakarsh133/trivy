@@ -1336,6 +1336,7 @@ var (
 			ID:           "function1",
 			Name:         "function1",
 			Version:      "",
+			Licenses:     []string{"ISC"},
 			Relationship: ftypes.RelationshipDirect,
 			ExternalReferences: []ftypes.ExternalRef{
 				{
@@ -1354,6 +1355,7 @@ var (
 			ID:           "nested_func@1.0.0",
 			Name:         "nested_func",
 			Version:      "1.0.0",
+			Licenses:     []string{"ISC"},
 			Relationship: ftypes.RelationshipDirect,
 			ExternalReferences: []ftypes.ExternalRef{
 				{
@@ -1442,6 +1444,46 @@ var (
 			DependsOn: []string{"debug@2.6.9"},
 		},
 	}
+
+	npmV3WithWorkspaceAsObjectPkgs = []ftypes.Package{
+		{
+			ID:           "testapp@1.0.0",
+			Name:         "testapp",
+			Version:      "1.0.0",
+			Relationship: ftypes.RelationshipDirect,
+			ExternalReferences: []ftypes.ExternalRef{
+				{
+					Type: ftypes.RefOther,
+					URL:  "testapp",
+				},
+			},
+			Locations: []ftypes.Location{
+				{
+					StartLine: 26,
+					EndLine:   31,
+				},
+			},
+		},
+		{
+			ID:           "lodash@4.17.21",
+			Name:         "lodash",
+			Version:      "4.17.21",
+			Licenses:     []string{"MIT"},
+			Relationship: ftypes.RelationshipIndirect,
+			ExternalReferences: []ftypes.ExternalRef{
+				{
+					Type: ftypes.RefOther,
+					URL:  "https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz",
+				},
+			},
+			Locations: []ftypes.Location{
+				{
+					StartLine: 16,
+					EndLine:   21,
+				},
+			},
+		},
+	}
 	// docker run --name node --rm -it node@sha256:51dd437f31812df71108b81385e2945071ec813d5815fa3403855669c8f3432b sh
 	// mkdir node_v3_with_peer && cd node_v3_with_peer
 	// npm init --force
@@ -1456,6 +1498,7 @@ var (
 			ID:           "lodash@4.17.21",
 			Name:         "lodash",
 			Version:      "4.17.21",
+			Licenses:     []string{"MIT"},
 			Relationship: ftypes.RelationshipDirect,
 			ExternalReferences: []ftypes.ExternalRef{
 				{
@@ -1474,6 +1517,7 @@ var (
 			ID:           "winston-mail@2.0.0",
 			Name:         "winston-mail",
 			Version:      "2.0.0",
+			Licenses:     []string{"MIT"},
 			Relationship: ftypes.RelationshipDirect,
 			ExternalReferences: []ftypes.ExternalRef{
 				{
@@ -1492,6 +1536,7 @@ var (
 			ID:           "mustache@2.3.2",
 			Name:         "mustache",
 			Version:      "2.3.2",
+			Licenses:     []string{"MIT"},
 			Relationship: ftypes.RelationshipIndirect,
 			ExternalReferences: []ftypes.ExternalRef{
 				{
@@ -1510,6 +1555,7 @@ var (
 			ID:           "triple-beam@1.4.1",
 			Name:         "triple-beam",
 			Version:      "1.4.1",
+			Licenses:     []string{"MIT"},
 			Relationship: ftypes.RelationshipIndirect,
 			ExternalReferences: []ftypes.ExternalRef{
 				{
@@ -1528,6 +1574,7 @@ var (
 			ID:           "winston@3.17.0",
 			Name:         "winston",
 			Version:      "3.17.0",
+			Licenses:     []string{"MIT"},
 			Relationship: ftypes.RelationshipIndirect,
 			ExternalReferences: []ftypes.ExternalRef{
 				{
@@ -1568,6 +1615,7 @@ var (
 			ID:           "func1@1.0.0",
 			Name:         "func1",
 			Version:      "1.0.0",
+			Licenses:     []string{"ISC"},
 			Relationship: ftypes.RelationshipDirect,
 			ExternalReferences: []ftypes.ExternalRef{
 				{
@@ -1663,6 +1711,7 @@ var (
 					URL:  "https://registry.npmjs.org/minimist/-/minimist-0.0.8.tgz",
 				},
 			},
+			Licenses: []string{"MIT"},
 			Locations: []ftypes.Location{
 				{
 					StartLine: 38,
@@ -1678,6 +1727,7 @@ var (
 			ID:           "mkdirp@0.5.1",
 			Name:         "mkdirp",
 			Version:      "0.5.1",
+			Licenses:     []string{"MIT"},
 			Relationship: ftypes.RelationshipIndirect,
 			Dev:          true,
 			Locations: []ftypes.Location{
@@ -1691,6 +1741,7 @@ var (
 			ID:           "node-pre-gyp@0.12.0",
 			Name:         "node-pre-gyp",
 			Version:      "0.12.0",
+			Licenses:     []string{"BSD-3-Clause"},
 			Relationship: ftypes.RelationshipIndirect,
 			Dev:          true,
 			Locations: []ftypes.Location{
@@ -1714,6 +1765,67 @@ var (
 		{
 			ID:        "node-pre-gyp@0.12.0",
 			DependsOn: []string{"mkdirp@0.5.1"},
+		},
+	}
+
+	npmV3WithLegacyLicensesPkgs = []ftypes.Package{
+		{
+			ID:           "mustache@2.3.2",
+			Name:         "mustache",
+			Version:      "2.3.2",
+			Licenses:     []string{"MIT"},
+			Relationship: ftypes.RelationshipDirect,
+			ExternalReferences: []ftypes.ExternalRef{
+				{
+					Type: ftypes.RefOther,
+					URL:  "https://registry.npmjs.org/mustache/-/mustache-2.3.2.tgz",
+				},
+			},
+			Locations: []ftypes.Location{
+				{
+					StartLine: 38,
+					EndLine:   43,
+				},
+			},
+		},
+		{
+			// Array-of-strings license shape is not supported, so no licenses are extracted.
+			// The rest of the lockfile must still be parsed successfully.
+			ID:           "pause-stream@0.0.11",
+			Name:         "pause-stream",
+			Version:      "0.0.11",
+			Relationship: ftypes.RelationshipDirect,
+			ExternalReferences: []ftypes.ExternalRef{
+				{
+					Type: ftypes.RefOther,
+					URL:  "https://registry.npmjs.org/pause-stream/-/pause-stream-0.0.11.tgz",
+				},
+			},
+			Locations: []ftypes.Location{
+				{
+					StartLine: 32,
+					EndLine:   37,
+				},
+			},
+		},
+		{
+			ID:           "tv4@1.3.0",
+			Name:         "tv4",
+			Version:      "1.3.0",
+			Licenses:     []string{"Public Domain", "MIT"},
+			Relationship: ftypes.RelationshipDirect,
+			ExternalReferences: []ftypes.ExternalRef{
+				{
+					Type: ftypes.RefOther,
+					URL:  "https://registry.npmjs.org/tv4/-/tv4-1.3.0.tgz",
+				},
+			},
+			Locations: []ftypes.Location{
+				{
+					StartLine: 17,
+					EndLine:   31,
+				},
+			},
 		},
 	}
 )

@@ -23,12 +23,14 @@ var (
 			types.MisconfigScanner,
 			types.SecretScanner,
 		}),
-		Usage: "comma-separated list of what security issues to detect on container image configurations",
+		Usage:         "comma-separated list of what security issues to detect on container image configurations",
+		TelemetrySafe: true,
 	}
 	ScanRemovedPkgsFlag = Flag[bool]{
-		Name:       "removed-pkgs",
-		ConfigName: "image.removed-pkgs",
-		Usage:      "detect vulnerabilities of removed packages (only for Alpine)",
+		Name:          "removed-pkgs",
+		ConfigName:    "image.removed-pkgs",
+		Usage:         "detect vulnerabilities of removed packages (only for Alpine)",
+		TelemetrySafe: true,
 	}
 	InputFlag = Flag[string]{
 		Name:       "input",
@@ -119,16 +121,12 @@ func (f *ImageFlagGroup) Flags() []Flagger {
 	}
 }
 
-func (f *ImageFlagGroup) ToOptions() (ImageOptions, error) {
-	if err := parseFlags(f); err != nil {
-		return ImageOptions{}, err
-	}
-
+func (f *ImageFlagGroup) ToOptions(opts *Options) error {
 	var platform ftypes.Platform
 	if p := f.Platform.Value(); p != "" {
 		pl, err := v1.ParsePlatform(p)
 		if err != nil {
-			return ImageOptions{}, xerrors.Errorf("unable to parse platform: %w", err)
+			return xerrors.Errorf("unable to parse platform: %w", err)
 		}
 		if pl.OS == "*" {
 			pl.OS = "" // Empty OS means any OS
@@ -139,12 +137,12 @@ func (f *ImageFlagGroup) ToOptions() (ImageOptions, error) {
 	if value := f.MaxImageSize.Value(); value != "" {
 		parsedSize, err := units.FromHumanSize(value)
 		if err != nil {
-			return ImageOptions{}, xerrors.Errorf("invalid max image size %q: %w", value, err)
+			return xerrors.Errorf("invalid max image size %q: %w", value, err)
 		}
 		maxSize = parsedSize
 	}
 
-	return ImageOptions{
+	opts.ImageOptions = ImageOptions{
 		Input:               f.Input.Value(),
 		ImageConfigScanners: xstrings.ToTSlice[types.Scanner](f.ImageConfigScanners.Value()),
 		ScanRemovedPkgs:     f.ScanRemovedPkgs.Value(),
@@ -153,5 +151,6 @@ func (f *ImageFlagGroup) ToOptions() (ImageOptions, error) {
 		PodmanHost:          f.PodmanHost.Value(),
 		ImageSources:        xstrings.ToTSlice[ftypes.ImageSource](f.ImageSources.Value()),
 		MaxImageSize:        maxSize,
-	}, nil
+	}
+	return nil
 }

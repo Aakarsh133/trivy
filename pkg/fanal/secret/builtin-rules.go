@@ -3,10 +3,9 @@ package secret
 import (
 	"fmt"
 
-	"github.com/samber/lo"
-
 	"github.com/aquasecurity/trivy/pkg/fanal/types"
 	iacRules "github.com/aquasecurity/trivy/pkg/iac/rules"
+	xslices "github.com/aquasecurity/trivy/pkg/x/slices"
 )
 
 var (
@@ -71,6 +70,10 @@ var (
 	CategoryTypeform             = types.SecretRuleCategory("Typeform")
 	CategoryDocker               = types.SecretRuleCategory("Docker")
 	CategoryHuggingFace          = types.SecretRuleCategory("HuggingFace")
+	CategorySymfony              = types.SecretRuleCategory("Symfony")
+	CategoryAzure                = types.SecretRuleCategory("Azure")
+	CategoryMaven                = types.SecretRuleCategory("Maven")
+	CategoryOpenAI               = types.SecretRuleCategory("OpenAI")
 )
 
 // Reusable regex patterns
@@ -78,7 +81,8 @@ const (
 	quote     = `["']?`
 	connect   = `\s*(:|=>|=)?\s*`
 	endSecret = `[.,]?(\s+|$)`
-	startWord = "([^0-9a-zA-Z]|^)"
+	startWord = "([^0-9a-zA-Z_]|^)"
+	endWord   = "([^0-9a-zA-Z_]|$)"
 
 	aws = `aws_?`
 )
@@ -90,7 +94,7 @@ func GetBuiltinRules() []Rule {
 
 // This function is exported for trivy-plugin-aqua purposes only
 func GetSecretRulesMetadata() []iacRules.Check {
-	return lo.Map(builtinRules, func(rule Rule, i int) iacRules.Check {
+	return xslices.Map(builtinRules, func(rule Rule) iacRules.Check {
 		return iacRules.Check{
 			Name:        rule.ID,
 			Description: rule.Title,
@@ -176,7 +180,7 @@ var builtinRules = []Rule{
 		Category:        CategoryHuggingFace,
 		Severity:        "CRITICAL",
 		Title:           "Hugging Face Access Token",
-		Regex:           MustCompileWithoutWordPrefix(`?P<secret>hf_[A-Za-z0-9]{34,40}`),
+		Regex:           MustCompileWithBoundaries(`?P<secret>hf_[A-Za-z0-9]{34,40}`),
 		SecretGroupName: "secret",
 		Keywords:        []string{"hf_"},
 	},
@@ -185,7 +189,7 @@ var builtinRules = []Rule{
 		Category:        CategoryAsymmetricPrivateKey,
 		Title:           "Asymmetric Private Key",
 		Severity:        "HIGH",
-		Regex:           MustCompile(`(?i)-----\s*?BEGIN[ A-Z0-9_-]*?PRIVATE KEY( BLOCK)?\s*?-----[\s]*?(?P<secret>[A-Za-z0-9=+/\\\r\n][A-Za-z0-9=+/\\\s]+)[\s]*?-----\s*?END[ A-Z0-9_-]*? PRIVATE KEY( BLOCK)?\s*?-----`),
+		Regex:           MustCompile(`(?i)-----\s*?BEGIN[ A-Z0-9_-]*?PRIVATE KEY( BLOCK)?\s*?-----[\s]*?(?P<secret>[A-Za-z0-9=+/\\][A-Za-z0-9=+/\\\s]{30,}[A-Za-z0-9=+/\\])[\s]*?-----\s*?END[ A-Z0-9_-]*? PRIVATE KEY( BLOCK)?\s*?-----`),
 		SecretGroupName: "secret",
 		Keywords:        []string{"-----"},
 	},
@@ -845,5 +849,198 @@ var builtinRules = []Rule{
 		Regex:           MustCompile(`(?i)(\.(dockerconfigjson|dockercfg):\s*\|*\s*(?P<secret>(ey|ew)+[A-Za-z0-9\/\+=]+))`),
 		SecretGroupName: "secret",
 		Keywords:        []string{"dockerc"},
+	},
+	{
+		ID:       "symfony-default-secret",
+		Category: CategorySymfony,
+		Title:    "Symfony Default Secret",
+		Severity: "HIGH",
+		Regex:    MustCompile(`ThisTokenIsNotSoSecretChangeIt|ThisEzPlatformTokenIsNotSoSecret_PleaseChangeIt`),
+		Keywords: []string{"TokenIsNotSoSecret"},
+	},
+	{
+		ID:              "azure-storage-account-key",
+		Category:        CategoryAzure,
+		Title:           "Azure Storage Account Key",
+		Severity:        "CRITICAL",
+		Regex:           MustCompile(`(?i)AccountKey\s*=\s*(?P<secret>[A-Za-z0-9+/]{86}==)`),
+		SecretGroupName: "secret",
+		Keywords:        []string{"AccountKey"},
+	},
+	{
+		ID:              "azure-sas-token",
+		Category:        CategoryAzure,
+		Title:           "Azure Shared Access Signature Token",
+		Severity:        "HIGH",
+		Regex:           MustCompile(`sv=\d{4}-\d{2}-\d{2}(?:[&;][a-z]+=[^&\s'"]*){1,12}[&;]sig=(?P<secret>[A-Za-z0-9%+/=]{40,})`),
+		SecretGroupName: "secret",
+		Keywords:        []string{"sig=", "sv="},
+	},
+	{
+		ID:              "azure-devops-pat",
+		Category:        CategoryAzure,
+		Title:           "Azure DevOps Personal Access Token",
+		Severity:        "HIGH",
+		Regex:           MustCompile(`(?i)(?:azure[_\-]?devops|ado)[_\-]?(?:pat|token|personal.?access.?token)\s*[:=]\s*["']?(?P<secret>[a-z2-7]{52})["']?`),
+		SecretGroupName: "secret",
+		Keywords: []string{
+			"azure_devops", "azuredevops", "azure-devops", "ado_pat", "ado_token", "ado-pat", "ado-token",
+		},
+	},
+	{
+		ID:              "azure-entra-client-secret",
+		Category:        CategoryAzure,
+		Title:           "Azure Entra ID Client Secret",
+		Severity:        "CRITICAL",
+		Regex:           MustCompile(`(?:[^a-zA-Z0-9_~.\-]|\A)(?P<secret>[a-zA-Z0-9_~.\-]{3}8Q~[a-zA-Z0-9_~.\-]{34})(?:[^a-zA-Z0-9_~.\-]|\z)`),
+		SecretGroupName: "secret",
+		Keywords:        []string{"8Q~"},
+	},
+	{
+		ID:              "azure-container-registry-credential",
+		Category:        CategoryAzure,
+		Title:           "Azure Container Registry Credential",
+		Severity:        "CRITICAL",
+		Regex:           MustCompile(`(?P<secret>[A-Za-z0-9+/]{52}JQQJ99C[A-Z]ACYeBjFEqg7NAAA[A-Z]AZCR[A-Za-z0-9+/]{4})`),
+		SecretGroupName: "secret",
+		Keywords:        []string{"ACYeBjFEqg7NAAA"},
+	},
+	{
+		ID:              "azure-container-registry-password",
+		Category:        CategoryAzure,
+		Title:           "Azure Container Registry Password",
+		Severity:        "CRITICAL",
+		Regex:           MustCompile(`(?i)azurecr\.io[^\n]{0,100}(?:password|pwd)\s*[:=]\s*["']?(?P<secret>[a-zA-Z0-9+/]{32})["']?`),
+		SecretGroupName: "secret",
+		Keywords:        []string{"azurecr.io"},
+	},
+	{
+		ID:              "azure-app-config-connection-string",
+		Category:        CategoryAzure,
+		Title:           "Azure App Configuration Connection String",
+		Severity:        "CRITICAL",
+		Regex:           MustCompile(`(?i)Endpoint\s*=\s*https://[a-zA-Z0-9\-]+\.azconfig\.io\s*;\s*Id\s*=\s*[a-zA-Z0-9+/=:\-]+\s*;\s*Secret\s*=\s*(?P<secret>[a-zA-Z0-9+/=~]{32,88})`),
+		SecretGroupName: "secret",
+		Keywords:        []string{"azconfig.io"},
+	},
+	{
+		ID:              "azure-ai-services-key",
+		Category:        CategoryAzure,
+		Title:           "Azure AI Services Key",
+		Severity:        "HIGH",
+		Regex:           MustCompile(`(?P<secret>[A-Za-z0-9+/]{52}JQQJ99C[A-Z][A-Za-z0-9+/]{7}XJ3w3[A-Za-z0-9+/]{4}ACOG[A-Za-z0-9+/]{4})`),
+		SecretGroupName: "secret",
+		Keywords:        []string{"XJ3w3"},
+	},
+	// Maven secrets for settings.xml and settings-security.xml — common storage for
+	// repository/server credentials baked into images.
+	//
+	// Path matches any settings.xml on the filesystem (not anchored to ~/.m2 or
+	// /etc/maven) because Maven settings ship in many locations and a narrower
+	// filter would miss legitimate cases. The XML tag combined with file name is
+	// already specific enough to keep false positives low.
+	//
+	// `password` and `passphrase` exclude `{` from the secret value, which skips
+	// both Maven-encrypted values (`{...}`, see
+	// plexus-cipher.DefaultPlexusCipher#ENCRYPTED_STRING_PATTERN) and Maven
+	// property substitution (`${env.X}`, `${prop.Y}`). Encrypted values are
+	// useless without the master from settings-security.xml (detected by a
+	// separate rule), and property placeholders are references rather than
+	// literal secrets.
+	{
+		ID:              "maven-settings-password",
+		Category:        CategoryMaven,
+		Title:           "Maven settings.xml password",
+		Severity:        "HIGH",
+		Regex:           MustCompile(`(?i)<\s*password\s*>\s*(?P<secret>[^<\s{][^<{]+[^<\s])\s*<\s*/\s*password\s*>`),
+		Path:            MustCompile(`(?i)(^|[/\\])settings\.xml$`),
+		SecretGroupName: "secret",
+		Keywords:        []string{"password"},
+	},
+	{
+		ID:              "maven-settings-passphrase",
+		Category:        CategoryMaven,
+		Title:           "Maven settings.xml passphrase",
+		Severity:        "HIGH",
+		Regex:           MustCompile(`(?i)<\s*passphrase\s*>\s*(?P<secret>[^<\s{][^<{]+[^<\s])\s*<\s*/\s*passphrase\s*>`),
+		Path:            MustCompile(`(?i)(^|[/\\])settings\.xml$`),
+		SecretGroupName: "secret",
+		Keywords:        []string{"passphrase"},
+	},
+	{
+		ID:              "maven-settings-security-master",
+		Category:        CategoryMaven,
+		Title:           "Maven settings-security.xml master password",
+		Severity:        "HIGH",
+		Regex:           MustCompile(`(?i)<\s*master\s*>\s*(?P<secret>[^<\s][^<]+[^<\s])\s*<\s*/\s*master\s*>`),
+		Path:            MustCompile(`(?i)(^|[/\\])settings-security\.xml$`),
+		SecretGroupName: "secret",
+		Keywords:        []string{"master"},
+	},
+	// OpenAI API credentials. Every sk-* key embeds the watermark "T3BlbkFJ"
+	// (base64 of "OpenAI") between two random segments of equal length, used as the
+	// pre-filter keyword. The watermark is the real discriminator, so the wide
+	// {20,100} length range does not raise false-positive risk and the rules do not
+	// clash with other vendors that reuse the `sk-` prefix (Anthropic `sk-ant-`,
+	// OpenRouter `sk-or-v1-`), which carry no watermark.
+	//
+	// The active-key rules (proj/svcacct/admin) and the service-key rule carry
+	// distinct literal prefixes, so they never overlap with each other. The legacy
+	// rule is restricted to `[A-Za-z0-9]` (no `-`/`_`) so its {20,42} run cannot
+	// bridge the hyphen in `sk-proj-`, `sk-svcacct-`, `sk-admin-` or `sk-service-`;
+	// this keeps a typed key from also matching the bare legacy pattern.
+	{
+		ID:              "openai-project-api-key",
+		Category:        CategoryOpenAI,
+		Title:           "OpenAI Project API Key",
+		Severity:        "CRITICAL",
+		Regex:           MustCompileWithoutWordPrefix(`?P<secret>sk-proj-[A-Za-z0-9_-]{20,100}T3BlbkFJ[A-Za-z0-9_-]{20,100}`),
+		SecretGroupName: "secret",
+		Keywords:        []string{"T3BlbkFJ"},
+	},
+	{
+		ID:              "openai-service-account-key",
+		Category:        CategoryOpenAI,
+		Title:           "OpenAI Service Account Key",
+		Severity:        "CRITICAL",
+		Regex:           MustCompileWithoutWordPrefix(`?P<secret>sk-svcacct-[A-Za-z0-9_-]{20,100}T3BlbkFJ[A-Za-z0-9_-]{20,100}`),
+		SecretGroupName: "secret",
+		Keywords:        []string{"T3BlbkFJ"},
+	},
+	{
+		ID:              "openai-admin-api-key",
+		Category:        CategoryOpenAI,
+		Title:           "OpenAI Admin API Key",
+		Severity:        "CRITICAL",
+		Regex:           MustCompileWithoutWordPrefix(`?P<secret>sk-admin-[A-Za-z0-9_-]{20,100}T3BlbkFJ[A-Za-z0-9_-]{20,100}`),
+		SecretGroupName: "secret",
+		Keywords:        []string{"T3BlbkFJ"},
+	},
+	{
+		ID:              "openai-legacy-api-key",
+		Category:        CategoryOpenAI,
+		Title:           "OpenAI Legacy User API Key",
+		Severity:        "HIGH",
+		Regex:           MustCompileWithoutWordPrefix(`?P<secret>sk-(?:None-)?[A-Za-z0-9]{20,42}T3BlbkFJ[A-Za-z0-9]{20,42}`),
+		SecretGroupName: "secret",
+		Keywords:        []string{"T3BlbkFJ"},
+	},
+	{
+		ID:              "openai-service-api-key",
+		Category:        CategoryOpenAI,
+		Title:           "OpenAI Service API Key",
+		Severity:        "HIGH",
+		Regex:           MustCompileWithoutWordPrefix(`?P<secret>sk-service-[A-Za-z0-9-]+-[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20}`),
+		SecretGroupName: "secret",
+		Keywords:        []string{"T3BlbkFJ"},
+	},
+	{
+		ID:              "openai-realtime-client-secret",
+		Category:        CategoryOpenAI,
+		Title:           "OpenAI Realtime Client Secret",
+		Severity:        "MEDIUM",
+		Regex:           MustCompileWithBoundaries(`?P<secret>ek_[a-f0-9]{32}`),
+		SecretGroupName: "secret",
+		Keywords:        []string{"ek_"},
 	},
 }

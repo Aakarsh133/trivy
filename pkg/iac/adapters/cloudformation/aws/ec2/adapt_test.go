@@ -98,20 +98,31 @@ Resources:
       MetadataOptions:
         HttpTokens: required
         HttpEndpoint: disabled
+  MyVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+    CidrBlock: 10.0.0.0/16
+  MyFlowLog:
+    Type: AWS::EC2::FlowLog
+    Properties:
+      LogGroupName: FlowLogsGroup
+      ResourceId: !Ref MyVPC
+      ResourceType: VPC
+      TrafficType: ALL
 `,
 			expected: ec2.EC2{
 				Instances: []ec2.Instance{
 					{
 						MetadataOptions: ec2.MetadataOptions{
-							HttpEndpoint: types.StringDefault("enabled", types.NewTestMetadata()),
-							HttpTokens:   types.StringDefault("optional", types.NewTestMetadata()),
+							HttpEndpoint: types.StringTest("enabled"),
+							HttpTokens:   types.StringTest("optional"),
 						},
 						RootBlockDevice: &ec2.BlockDevice{
-							Encrypted: types.BoolDefault(true, types.NewTestMetadata()),
+							Encrypted: types.BoolTest(true),
 						},
 						EBSBlockDevices: []*ec2.BlockDevice{
 							{
-								Encrypted: types.BoolDefault(false, types.NewTestMetadata()),
+								Encrypted: types.BoolTest(false),
 							},
 						},
 					},
@@ -193,6 +204,39 @@ Resources:
 						},
 					},
 				},
+				VPCs: []ec2.VPC{
+					{
+						FlowLogsEnabled: types.BoolTest(true),
+					},
+				},
+			},
+		},
+		{
+			name: "ec2 instance with metadata options",
+			source: `AWSTemplateFormatVersion: 2010-09-09
+Resources:
+  MyEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-12345
+      InstanceType: t3.micro
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpTokens: required
+`,
+			expected: ec2.EC2{
+				Instances: []ec2.Instance{
+					{
+						MetadataOptions: ec2.MetadataOptions{
+							HttpEndpoint: types.StringTest("enabled"),
+							HttpTokens:   types.StringTest("required"),
+						},
+						RootBlockDevice: &ec2.BlockDevice{
+							Encrypted: types.BoolTest(false),
+						},
+					},
+				},
+				VPCs: nil,
 			},
 		},
 		{
@@ -237,6 +281,7 @@ Resources:
 						},
 					},
 				},
+				VPCs: nil,
 			},
 		},
 		{
@@ -281,6 +326,7 @@ Resources:
 						},
 					},
 				},
+				VPCs: nil,
 			},
 		},
 		{
@@ -336,6 +382,7 @@ Resources:
 						},
 					},
 				},
+				VPCs: nil,
 			},
 		},
 		{
@@ -362,6 +409,30 @@ Resources:
 								ToPort:   types.IntTest(-1),
 							},
 						},
+					},
+				},
+				VPCs: nil,
+			},
+		},
+		{
+			name: "VPC flow log ref to other VPC",
+			source: `AWSTemplateFormatVersion: 2010-09-09
+Resources:
+  MyVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+    CidrBlock: 10.0.0.0/16
+  MyFlowLog:
+    Type: AWS::EC2::FlowLog
+    Properties:
+      LogGroupName: FlowLogsGroup
+      ResourceId: !Ref MyOtherVPC
+      ResourceType: VPC
+      TrafficType: ALL`,
+			expected: ec2.EC2{
+				VPCs: []ec2.VPC{
+					{
+						FlowLogsEnabled: types.BoolTest(false),
 					},
 				},
 			},

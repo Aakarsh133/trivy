@@ -2,7 +2,6 @@ package dockerfile_test
 
 import (
 	"bytes"
-	"context"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -28,7 +27,6 @@ const DS006PolicyWithDockerfileSchema = `# METADATA
 # - https://docs.docker.com/develop/develop-images/multistage-build/
 # custom:
 #   id: DS006
-#   avd_id: AVD-DS-0006
 #   severity: CRITICAL
 #   short_code: no-self-referencing-copy-from
 #   recommended_action: "Change the '--from' so that it will not refer to itself"
@@ -84,7 +82,6 @@ const DS006PolicyWithMyFancyDockerfileSchema = `# METADATA
 # - https://docs.docker.com/develop/develop-images/multistage-build/
 # custom:
 #   id: DS006
-#   avd_id: AVD-DS-0006
 #   severity: CRITICAL
 #   short_code: no-self-referencing-copy-from
 #   recommended_action: "Change the '--from' so that it will not refer to itself"
@@ -140,7 +137,6 @@ const DS006PolicyWithOldSchemaSelector = `# METADATA
 # - https://docs.docker.com/develop/develop-images/multistage-build/
 # custom:
 #   id: DS006
-#   avd_id: AVD-DS-0006
 #   severity: CRITICAL
 #   short_code: no-self-referencing-copy-from
 #   recommended_action: "Change the '--from' so that it will not refer to itself"
@@ -189,7 +185,6 @@ const DS006LegacyWithOldStyleMetadata = `package builtin.dockerfile.DS006
 
 __rego_metadata__ := {
 	"id": "DS006",
-	"avd_id": "AVD-DS-0006",
 	"title": "COPY '--from' referring to the current image",
 	"short_code": "no-self-referencing-copy-from",
 	"version": "v1.0.0",
@@ -215,7 +210,7 @@ deny[res] {
 }`
 
 func Test_BasicScanLegacyRegoMetadata(t *testing.T) {
-	fs := testutil.CreateFS(t, map[string]string{
+	fs := testutil.CreateFS(map[string]string{
 		"/code/Dockerfile": `FROM ubuntu
 USER root
 `,
@@ -224,7 +219,7 @@ USER root
 
 	scanner := dockerfile.NewScanner(rego.WithPolicyDirs("rules"))
 
-	results, err := scanner.ScanFS(context.TODO(), fs, "code")
+	results, err := scanner.ScanFS(t.Context(), fs, "code")
 	require.NoError(t, err)
 
 	require.Len(t, results.GetFailed(), 1)
@@ -238,8 +233,7 @@ USER root
 	assert.Equal(
 		t,
 		scan.Rule{
-			AVDID:          "AVD-DS-0006",
-			Aliases:        []string{"DS006"},
+			ID:             "DS006",
 			ShortCode:      "no-self-referencing-copy-from",
 			Summary:        "COPY '--from' referring to the current image",
 			Explanation:    "COPY '--from' should not mention the current FROM alias, since it is impossible to copy from itself.",
@@ -560,7 +554,7 @@ res := true
 COPY --from=dep /binary /`
 			fsysMap["/rules/rule.rego"] = tc.inputRegoPolicy
 			fsysMap["/rules/schemas/myfancydockerfile.json"] = string(schemas.Dockerfile) // just use the same for testing
-			fsys := testutil.CreateFS(t, fsysMap)
+			fsys := testutil.CreateFS(fsysMap)
 
 			var traceBuf bytes.Buffer
 
@@ -568,12 +562,12 @@ COPY --from=dep /binary /`
 				rego.WithPolicyDirs("rules"),
 				rego.WithEmbeddedLibraries(true),
 				rego.WithTrace(&traceBuf),
-				rego.WithRegoErrorLimits(0),
+				rego.WithMaxAllowedErrors(0),
 			)
 
-			results, err := scanner.ScanFS(context.TODO(), fsys, "code")
+			results, err := scanner.ScanFS(t.Context(), fsys, "code")
 			if tc.expectedError != "" && err != nil {
-				require.Equal(t, tc.expectedError, err.Error(), tc.name)
+				require.ErrorContainsf(t, err, tc.expectedError, tc.name)
 			} else {
 				require.NoError(t, err)
 				require.Len(t, results.GetFailed(), 1)
@@ -587,8 +581,7 @@ COPY --from=dep /binary /`
 				assert.Equal(
 					t,
 					scan.Rule{
-						AVDID:          "AVD-DS-0006",
-						Aliases:        []string{"DS006"},
+						ID:             "DS006",
 						ShortCode:      "no-self-referencing-copy-from",
 						Summary:        "COPY '--from' referring to the current image",
 						Explanation:    "COPY '--from' should not mention the current FROM alias, since it is impossible to copy from itself.",
@@ -659,7 +652,7 @@ MAINTAINER moby@example.com`,
 # schemas:
 # - input: schema["dockerfile"]
 # custom:
-#   avd_id: USER-TEST-0001
+#   id: USER-TEST-0001
 #   short_code: maintainer-deprecated
 #   input:
 #     selector:
@@ -690,9 +683,9 @@ deny contains res if {
 				rego.WithPolicyReader(strings.NewReader(check)),
 				rego.WithPolicyNamespaces("user"),
 				rego.WithEmbeddedLibraries(true),
-				rego.WithRegoErrorLimits(0),
+				rego.WithMaxAllowedErrors(0),
 			)
-			results, err := scanner.ScanFS(context.TODO(), fsys, ".")
+			results, err := scanner.ScanFS(t.Context(), fsys, ".")
 			require.NoError(t, err)
 			if tt.expected {
 				testutil.AssertRuleFound(t, "dockerfile-general-maintainer-deprecated", results, "")

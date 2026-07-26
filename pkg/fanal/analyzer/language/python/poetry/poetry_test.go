@@ -1,7 +1,6 @@
 package poetry
 
 import (
-	"context"
 	"os"
 	"testing"
 
@@ -332,6 +331,35 @@ func Test_poetryLibraryAnalyzer_Analyze(t *testing.T) {
 			},
 		},
 		{
+			name: "optional groups without dependencies",
+			dir:  "testdata/optional-groups",
+			want: &analyzer.AnalysisResult{
+				Applications: []types.Application{
+					{
+						Type:     types.Poetry,
+						FilePath: "poetry.lock",
+						Packages: types.Packages{
+							{
+								ID:           "click@8.1.3",
+								Name:         "click",
+								Version:      "8.1.3",
+								Relationship: types.RelationshipDirect,
+								DependsOn: []string{
+									"colorama@0.4.6",
+								},
+							},
+							{
+								ID:           "colorama@0.4.6",
+								Name:         "colorama",
+								Version:      "0.4.6",
+								Relationship: types.RelationshipDirect,
+							},
+						},
+					},
+				},
+			},
+		},
+		{
 			name: "broken poetry.lock",
 			dir:  "testdata/sad",
 			want: &analyzer.AnalysisResult{},
@@ -557,7 +585,7 @@ func Test_poetryLibraryAnalyzer_Analyze(t *testing.T) {
 			a, err := newPoetryAnalyzer(analyzer.AnalyzerOptions{})
 			require.NoError(t, err)
 
-			got, err := a.PostAnalyze(context.Background(), analyzer.PostAnalysisInput{
+			got, err := a.PostAnalyze(t.Context(), analyzer.PostAnalysisInput{
 				FS: os.DirFS(tt.dir),
 			})
 

@@ -17,17 +17,17 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/aquasecurity/trivy/pkg/types"
-
-	dockercontainer "github.com/docker/docker/api/types/container"
-	"github.com/docker/go-connections/nat"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
+	"github.com/moby/moby/api/types/container"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/aquasecurity/trivy/internal/testutil"
+	"github.com/aquasecurity/trivy/pkg/types"
 )
 
 const (
@@ -59,7 +59,7 @@ func setupRegistry(ctx context.Context, baseDir string, authURL *url.URL) (testc
 		Mounts: testcontainers.Mounts(
 			testcontainers.BindMount(filepath.Join(baseDir, "data", "certs"), "/certs"),
 		),
-		HostConfigModifier: func(hostConfig *dockercontainer.HostConfig) {
+		HostConfigModifier: func(hostConfig *container.HostConfig) {
 			hostConfig.AutoRemove = true
 		},
 		WaitingFor: wait.ForHTTP("v2").WithTLS(true).WithAllowInsecure(true).
@@ -84,7 +84,7 @@ func setupAuthServer(ctx context.Context, baseDir string) (testcontainers.Contai
 			testcontainers.BindMount(filepath.Join(baseDir, "data", "auth_config"), "/config"),
 			testcontainers.BindMount(filepath.Join(baseDir, "data", "certs"), "/certs"),
 		),
-		HostConfigModifier: func(hostConfig *dockercontainer.HostConfig) {
+		HostConfigModifier: func(hostConfig *container.HostConfig) {
 			hostConfig.AutoRemove = true
 		},
 		Cmd: []string{"/config/config.yml"},
@@ -97,7 +97,7 @@ func setupAuthServer(ctx context.Context, baseDir string) (testcontainers.Contai
 	return authC, err
 }
 
-func getURL(ctx context.Context, container testcontainers.Container, exposedPort nat.Port) (*url.URL, error) {
+func getURL(ctx context.Context, container testcontainers.Container, exposedPort string) (*url.URL, error) {
 	ip, err := container.Host(ctx)
 	if err != nil {
 		return nil, err
@@ -120,8 +120,15 @@ type registryOption struct {
 	AuthLogin     bool
 }
 
+// TestRegistry tests scanning images from a container registry.
+//
+// Golden files are shared with TestTar.
 func TestRegistry(t *testing.T) {
-	ctx := context.Background()
+	if *update {
+		t.Skipf("Skipping TestRegistry when -update flag is set. Golden files should be updated via TestTar.")
+	}
+
+	ctx := t.Context()
 
 	baseDir, err := filepath.Abs(".")
 	require.NoError(t, err)
@@ -168,7 +175,7 @@ func TestRegistry(t *testing.T) {
 				Username: authUsername,
 				Password: authPassword,
 			},
-			golden: "testdata/alpine-310.json.golden",
+			golden: goldenAlpine310JSON,
 		},
 		{
 			name:      "authenticate with registry token",
@@ -181,7 +188,7 @@ func TestRegistry(t *testing.T) {
 				Password:      authPassword,
 				RegistryToken: true,
 			},
-			golden: "testdata/alpine-310.json.golden",
+			golden: goldenAlpine310JSON,
 		},
 		{
 			name:      "authenticate with 'trivy registry login'",
@@ -193,7 +200,7 @@ func TestRegistry(t *testing.T) {
 				Password:  authPassword,
 				AuthLogin: true,
 			},
-			golden: "testdata/alpine-310.json.golden",
+			golden: goldenAlpine310JSON,
 		},
 		{
 			name:      "amazonlinux 2",
@@ -204,7 +211,7 @@ func TestRegistry(t *testing.T) {
 				Username: authUsername,
 				Password: authPassword,
 			},
-			golden: "testdata/amazon-2.json.golden",
+			golden: goldenAmazon2,
 		},
 		{
 			name:      "debian buster",
@@ -215,7 +222,7 @@ func TestRegistry(t *testing.T) {
 				Username: authUsername,
 				Password: authPassword,
 			},
-			golden: "testdata/debian-buster.json.golden",
+			golden: goldenDebianBuster,
 		},
 		{
 			name:      "sad path",
@@ -239,10 +246,19 @@ func TestRegistry(t *testing.T) {
 			require.NoError(t, err)
 
 			// Run Trivy
-			runTest(t, osArgs, tt.golden, "", types.FormatJSON, runOptions{
-				wantErr: tt.wantErr,
-				override: overrideFuncs(overrideUID, func(t *testing.T, want, got *types.Report) {
+			runTest(t, osArgs, tt.golden, types.FormatJSON, runOptions{
+				wantErr:  tt.wantErr,
+				fakeUUID: "3ff14136-e09f-4df9-80ea-%012d",
+				override: overrideFuncs(overrideUID, overrideFingerprint, func(t *testing.T, want, got *types.Report) {
+					// Exclude ArtifactID from comparison because registry tests use random ports
+					// (e.g., localhost:54321/alpine:3.10), which causes RepoTags and the calculated
+					// Artifact ID to vary on each test run.
+					got.ArtifactID = ""
+					want.ArtifactID = ""
+
 					want.ArtifactName = s
+					want.Metadata.RepoTags = []string{s}
+					want.Metadata.Reference = testutil.MustParseReference(t, s)
 					for i := range want.Results {
 						want.Results[i].Target = fmt.Sprintf("%s (%s)", s, tt.os)
 					}
@@ -271,6 +287,7 @@ func scan(t *testing.T, imageRef name.Reference, baseDir string, opt registryOpt
 		"image",
 		"--format",
 		"json",
+		"--list-all-pkgs=false",
 		"--image-src",
 		"remote",
 		"--skip-db-update",
@@ -334,7 +351,7 @@ func requestRegistryToken(imageRef name.Reference, baseDir string, opt registryO
 	}
 
 	// Get a registry token
-	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/auth", opt.AuthURL), nil)
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/auth", opt.AuthURL), http.NoBody)
 	if err != nil {
 		return "", err
 	}

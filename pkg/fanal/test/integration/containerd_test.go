@@ -18,8 +18,8 @@ import (
 	"github.com/containerd/containerd/v2/client"
 	"github.com/containerd/containerd/v2/core/images"
 	"github.com/containerd/containerd/v2/pkg/namespaces"
-	dockercontainer "github.com/docker/docker/api/types/container"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/moby/moby/api/types/container"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -52,7 +52,10 @@ func setupContainerd(t *testing.T, ctx context.Context, namespace string) *clien
 
 	startContainerd(t, ctx, tmpDir)
 
-	// Retry up to 3 times until containerd is ready
+	// Retry until containerd is ready.
+	// client.New uses lazy gRPC dialing, so we verify actual connectivity with
+	// a real RPC call (Version) to catch "permission denied" on the socket before
+	// returning the client to callers.
 	var c *client.Client
 	iteration, _, err := lo.AttemptWhileWithDelay(3, 1*time.Second, func(int, time.Duration) (error, bool) {
 		c, err = client.New(socketPath)
@@ -61,6 +64,11 @@ func setupContainerd(t *testing.T, ctx context.Context, namespace string) *clien
 				return err, false // unexpected error
 			}
 			return err, true
+		}
+		// Force actual dial to detect socket permission issues early.
+		if _, vErr := c.Version(ctx); vErr != nil {
+			_ = c.Close()
+			return vErr, true
 		}
 		t.Cleanup(func() {
 			require.NoError(t, c.Close())
@@ -91,7 +99,7 @@ func startContainerd(t *testing.T, ctx context.Context, hostPath string) {
 		Mounts: testcontainers.Mounts(
 			testcontainers.BindMount(hostPath, "/run"),
 		),
-		HostConfigModifier: func(hostConfig *dockercontainer.HostConfig) {
+		HostConfigModifier: func(hostConfig *container.HostConfig) {
 			hostConfig.AutoRemove = true
 		},
 		WaitingFor: wait.ForLog("containerd successfully booted"),
@@ -103,12 +111,13 @@ func startContainerd(t *testing.T, ctx context.Context, hostPath string) {
 	require.NoError(t, err)
 	testcontainers.CleanupContainer(t, containerdC)
 
-	_, _, err = containerdC.Exec(ctx, []string{
+	exitCode, _, err := containerdC.Exec(ctx, []string{
 		"chmod",
 		"666",
 		"/run/containerd/containerd.sock",
 	})
 	require.NoError(t, err)
+	require.Zero(t, exitCode, "chmod containerd.sock failed")
 }
 
 // Each of these tests imports an image and tags it with the name found in the
@@ -310,6 +319,7 @@ func localImageTestWithNamespace(t *testing.T, namespace string) {
 				},
 				RepoTags:    []string{testutil.ImageName("", "alpine-310", "")},
 				RepoDigests: []string{testutil.ImageName("", "", "sha256:f12582b2f2190f350e3904462c1c23aaf366b4f76705e97b199f9bbded1d816a")},
+				Reference:   testutil.MustParseReference(t, testutil.ImageName("", "alpine-310", "")),
 				ConfigFile: v1.ConfigFile{
 					Architecture: "amd64",
 					Created: v1.Time{
@@ -332,6 +342,7 @@ func localImageTestWithNamespace(t *testing.T, namespace string) {
 						Env: []string{
 							"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 						},
+						ArgsEscaped: true,
 					},
 					History: []v1.History{
 						{
@@ -352,7 +363,8 @@ func localImageTestWithNamespace(t *testing.T, namespace string) {
 			imageName:  testutil.ImageName("", "vulnimage", ""),
 			tarArchive: "../../../../integration/testdata/fixtures/images/vulnimage.tar.gz",
 			wantMetadata: artifact.ImageMetadata{
-				ID: "sha256:c17083664da903e13e9092fa3a3a1aeee2431aa2728298e3dbcec72f26369c41",
+				ID:        "sha256:c17083664da903e13e9092fa3a3a1aeee2431aa2728298e3dbcec72f26369c41",
+				Reference: testutil.MustParseReference(t, testutil.ImageName("", "vulnimage", "")),
 				DiffIDs: []string{
 					"sha256:ebf12965380b39889c99a9c02e82ba465f887b45975b6e389d42e9e6a3857888",
 					"sha256:0ea33a93585cf1917ba522b2304634c3073654062d5282c1346322967790ef33",
@@ -492,6 +504,7 @@ func localImageTestWithNamespace(t *testing.T, namespace string) {
 							"/bin/sh",
 							"/docker-entrypoint.sh",
 						},
+						ArgsEscaped: true,
 					},
 					History: []v1.History{
 						{
@@ -676,7 +689,7 @@ func localImageTestWithNamespace(t *testing.T, namespace string) {
 			require.NoError(t, err)
 
 			defer func() {
-				c.Clear()
+				c.Clear(t.Context())
 				c.Close()
 			}()
 
@@ -710,8 +723,11 @@ func localImageTestWithNamespace(t *testing.T, namespace string) {
 			require.Equal(t, tt.wantMetadata, ref.ImageMetadata)
 
 			a := applier.NewApplier(c)
-			got, err := a.ApplyLayers(ref.ID, ref.BlobIDs)
+			got, err := a.ApplyLayers(ctx, ref.ID, ref.BlobIDs)
 			require.NoError(t, err)
+
+			// Clear package detail fields
+			clearPackageDetailFields(got.Packages)
 
 			tag := strings.Split(tt.imageName, ":")[1]
 			goldenFile := fmt.Sprintf("testdata/goldens/packages/%s.json.golden", tag)
@@ -760,6 +776,7 @@ func TestContainerd_PullImage(t *testing.T) {
 				},
 				RepoTags:    []string{testutil.ImageName("", "alpine-310", "")},
 				RepoDigests: []string{testutil.ImageName("", "", "sha256:72c42ed48c3a2db31b7dafe17d275b634664a708d901ec9fd57b1529280f01fb")},
+				Reference:   testutil.MustParseReference(t, testutil.ImageName("", "alpine-310", "")),
 				ConfigFile: v1.ConfigFile{
 					Architecture: "amd64",
 					Created: v1.Time{
@@ -782,7 +799,7 @@ func TestContainerd_PullImage(t *testing.T) {
 						Env: []string{
 							"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 						},
-						ArgsEscaped: false,
+						ArgsEscaped: true,
 					},
 					History: []v1.History{
 						{
@@ -811,7 +828,7 @@ func TestContainerd_PullImage(t *testing.T) {
 			require.NoError(t, err)
 
 			defer func() {
-				c.Clear()
+				c.Clear(t.Context())
 				c.Close()
 			}()
 
@@ -839,7 +856,7 @@ func TestContainerd_PullImage(t *testing.T) {
 			require.Equal(t, tt.wantMetadata, ref.ImageMetadata)
 
 			a := applier.NewApplier(c)
-			got, err := a.ApplyLayers(ref.ID, ref.BlobIDs)
+			got, err := a.ApplyLayers(ctx, ref.ID, ref.BlobIDs)
 			require.NoError(t, err)
 
 			// Parse a golden file
@@ -850,6 +867,9 @@ func TestContainerd_PullImage(t *testing.T) {
 			var wantPkgs types.Packages
 			err = json.NewDecoder(golden).Decode(&wantPkgs)
 			require.NoError(t, err)
+
+			// Clear package detail fields for comparison
+			clearPackageDetailFields(got.Packages)
 
 			// Assert
 			assert.Equal(t, wantPkgs, got.Packages)

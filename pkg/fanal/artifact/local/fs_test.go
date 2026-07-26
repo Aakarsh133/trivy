@@ -2,20 +2,23 @@ package local
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/aquasecurity/trivy/internal/cachetest"
 	"github.com/aquasecurity/trivy/pkg/cache"
 	"github.com/aquasecurity/trivy/pkg/fanal/analyzer"
 	"github.com/aquasecurity/trivy/pkg/fanal/artifact"
 	"github.com/aquasecurity/trivy/pkg/fanal/types"
 	"github.com/aquasecurity/trivy/pkg/fanal/walker"
 	"github.com/aquasecurity/trivy/pkg/misconf"
+	trivytypes "github.com/aquasecurity/trivy/pkg/types"
 	"github.com/aquasecurity/trivy/pkg/uuid"
 
 	_ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/config/all"
@@ -31,24 +34,25 @@ func TestArtifact_Inspect(t *testing.T) {
 		dir string
 	}
 	tests := []struct {
-		name               string
-		fields             fields
-		artifactOpt        artifact.Option
-		scannerOpt         misconf.ScannerOption
-		disabledAnalyzers  []analyzer.Type
-		disabledHandlers   []types.HandlerType
-		putBlobExpectation cache.ArtifactCachePutBlobExpectation
-		want               artifact.Reference
-		wantErr            string
+		name              string
+		fields            fields
+		setupCache        func(t *testing.T) cache.Cache
+		artifactOpt       artifact.Option
+		scannerOpt        misconf.ScannerOption
+		disabledAnalyzers []analyzer.Type
+		disabledHandlers  []types.HandlerType
+		wantBlobs         []cachetest.WantBlob
+		want              artifact.Reference
+		wantErr           string
 	}{
 		{
 			name: "happy path",
 			fields: fields{
 				dir: "./testdata/alpine",
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: types.BlobJSONSchemaVersion,
 						OS: types.OS{
@@ -66,23 +70,24 @@ func TestArtifact_Inspect(t *testing.T) {
 										SrcName:    "musl",
 										SrcVersion: "1.1.24-r2",
 										Licenses:   []string{"MIT"},
+										Maintainer: "Timo Teräs <timo.teras@iki.fi>",
 										Arch:       "x86_64",
 										Digest:     "sha1:cb2316a189ebee5282c4a9bd98794cc2477a74c6",
 										InstalledFiles: []string{
 											"lib/libc.musl-x86_64.so.1",
 											"lib/ld-musl-x86_64.so.1",
 										},
+										AnalyzedBy: analyzer.TypeApk,
 									},
 								},
 							},
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "host",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -99,20 +104,20 @@ func TestArtifact_Inspect(t *testing.T) {
 					analyzer.TypeAlpine,
 					analyzer.TypeApk,
 					analyzer.TypePip,
+					analyzer.TypeNpmPkgLock,
 				},
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: types.BlobJSONSchemaVersion,
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "host",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -124,43 +129,12 @@ func TestArtifact_Inspect(t *testing.T) {
 			fields: fields{
 				dir: "./testdata/alpine",
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
-					BlobInfo: types.BlobInfo{
-						SchemaVersion: types.BlobJSONSchemaVersion,
-						OS: types.OS{
-							Family: "alpine",
-							Name:   "3.11.6",
-						},
-						PackageInfos: []types.PackageInfo{
-							{
-								FilePath: "lib/apk/db/installed",
-								Packages: types.Packages{
-									{
-										ID:         "musl@1.1.24-r2",
-										Name:       "musl",
-										Version:    "1.1.24-r2",
-										SrcName:    "musl",
-										SrcVersion: "1.1.24-r2",
-										Licenses:   []string{"MIT"},
-										Arch:       "x86_64",
-										Digest:     "sha1:cb2316a189ebee5282c4a9bd98794cc2477a74c6",
-										InstalledFiles: []string{
-											"lib/libc.musl-x86_64.so.1",
-											"lib/ld-musl-x86_64.so.1",
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-				Returns: cache.ArtifactCachePutBlobReturns{
-					Err: errors.New("error"),
-				},
+			setupCache: func(_ *testing.T) cache.Cache {
+				return cachetest.NewErrorCache(cachetest.ErrorCacheOptions{
+					PutBlob: true,
+				})
 			},
-			wantErr: "failed to store blob",
+			wantErr: "PutBlob failed",
 		},
 		{
 			name: "sad path with no such directory",
@@ -174,9 +148,9 @@ func TestArtifact_Inspect(t *testing.T) {
 			fields: fields{
 				dir: "testdata/requirements.txt",
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: types.BlobJSONSchemaVersion,
 						Applications: []types.Application{
@@ -193,17 +167,17 @@ func TestArtifact_Inspect(t *testing.T) {
 												EndLine:   1,
 											},
 										},
+										AnalyzedBy: analyzer.TypePip,
 									},
 								},
 							},
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/requirements.txt",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -215,9 +189,9 @@ func TestArtifact_Inspect(t *testing.T) {
 			fields: fields{
 				dir: "./testdata/requirements.txt",
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: types.BlobJSONSchemaVersion,
 						Applications: []types.Application{
@@ -234,20 +208,52 @@ func TestArtifact_Inspect(t *testing.T) {
 												EndLine:   1,
 											},
 										},
+										AnalyzedBy: analyzer.TypePip,
 									},
 								},
 							},
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/requirements.txt",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
+				},
+			},
+		},
+		{
+			name: "git repository: artifact type is changed to repository",
+			fields: fields{
+				dir: "../../../../internal/gittest/testdata/test-repo",
+			},
+			wantBlobs: []cachetest.WantBlob{
+				{
+					// Cache key is based on commit hash (8a19b492a589955c3e70c6ad8efd1e4ec6ae0d35)
+					ID: "sha256:d37c788d6fe832712cce9020943746b8764c04f7e323ed4ad68de36c5bf7d846",
+					BlobInfo: types.BlobInfo{
+						SchemaVersion: types.BlobJSONSchemaVersion,
+					},
+				},
+			},
+			want: artifact.Reference{
+				Name: "../../../../internal/gittest/testdata/test-repo",
+				Type: types.TypeRepository,
+				ID:   "sha256:d37c788d6fe832712cce9020943746b8764c04f7e323ed4ad68de36c5bf7d846",
+				BlobIDs: []string{
+					"sha256:d37c788d6fe832712cce9020943746b8764c04f7e323ed4ad68de36c5bf7d846",
+				},
+				RepoMetadata: artifact.RepoMetadata{
+					RepoURL:   "https://github.com/aquasecurity/trivy-test-repo/",
+					Branch:    "main",
+					Tags:      []string{"v0.0.1"},
+					Commit:    "8a19b492a589955c3e70c6ad8efd1e4ec6ae0d35",
+					CommitMsg: "Update README.md",
+					Author:    "Teppei Fukuda <knqyf263@gmail.com>",
+					Committer: "GitHub <noreply@github.com>",
 				},
 			},
 		},
@@ -257,20 +263,19 @@ func TestArtifact_Inspect(t *testing.T) {
 			// Set fake UUID for consistent test results
 			uuid.SetFakeUUID(t, "3ff14136-e09f-4df9-80ea-%012d")
 
-			c := new(cache.MockArtifactCache)
-			c.ApplyPutBlobExpectation(tt.putBlobExpectation)
+			c := cachetest.NewCache(t, tt.setupCache)
 
 			a, err := NewArtifact(tt.fields.dir, c, walker.NewFS(), tt.artifactOpt)
 			require.NoError(t, err)
 
-			got, err := a.Inspect(context.Background())
+			got, err := a.Inspect(t.Context())
 			if tt.wantErr != "" {
 				require.ErrorContains(t, err, tt.wantErr)
 				return
-			} else {
-				require.NoError(t, err)
 			}
+			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
+			cachetest.AssertBlobs(t, c, tt.wantBlobs)
 		})
 	}
 }
@@ -291,20 +296,20 @@ func TestTerraformMisconfigurationScan(t *testing.T) {
 		dir string
 	}
 	tests := []struct {
-		name               string
-		fields             fields
-		putBlobExpectation cache.ArtifactCachePutBlobExpectation
-		artifactOpt        artifact.Option
-		want               artifact.Reference
+		name        string
+		fields      fields
+		wantBlobs   []cachetest.WantBlob
+		artifactOpt artifact.Option
+		want        artifact.Reference
 	}{
 		{
 			name: "single failure",
 			fields: fields{
 				dir: "./testdata/misconfig/terraform/single-failure",
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: 2,
 						Misconfigurations: []types.Misconfiguration{
@@ -330,11 +335,10 @@ func TestTerraformMisconfigurationScan(t *testing.T) {
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/terraform/single-failure",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -346,9 +350,9 @@ func TestTerraformMisconfigurationScan(t *testing.T) {
 			fields: fields{
 				dir: "./testdata/misconfig/terraform/multiple-failures",
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: 2,
 						Misconfigurations: []types.Misconfiguration{
@@ -406,11 +410,10 @@ func TestTerraformMisconfigurationScan(t *testing.T) {
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/terraform/multiple-failures",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -422,18 +425,17 @@ func TestTerraformMisconfigurationScan(t *testing.T) {
 			fields: fields{
 				dir: "./testdata/misconfig/terraform/no-results",
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: types.BlobJSONSchemaVersion,
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/terraform/no-results",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -445,9 +447,9 @@ func TestTerraformMisconfigurationScan(t *testing.T) {
 			fields: fields{
 				dir: "./testdata/misconfig/terraform/passed",
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: 2,
 						Misconfigurations: []types.Misconfiguration{
@@ -469,11 +471,10 @@ func TestTerraformMisconfigurationScan(t *testing.T) {
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/terraform/passed",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -485,9 +486,9 @@ func TestTerraformMisconfigurationScan(t *testing.T) {
 			fields: fields{
 				dir: "./testdata/misconfig/terraform/busted-relative-paths/child/main.tf",
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: 2,
 						Misconfigurations: []types.Misconfiguration{
@@ -526,11 +527,10 @@ func TestTerraformMisconfigurationScan(t *testing.T) {
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/terraform/busted-relative-paths/child/main.tf",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -547,9 +547,9 @@ func TestTerraformMisconfigurationScan(t *testing.T) {
 					TerraformTFVars: []string{"./testdata/misconfig/terraform/tfvar-outside/main.tfvars"},
 				},
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: 2,
 						Misconfigurations: []types.Misconfiguration{
@@ -571,11 +571,10 @@ func TestTerraformMisconfigurationScan(t *testing.T) {
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/terraform/tfvar-outside/tf",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -587,9 +586,9 @@ func TestTerraformMisconfigurationScan(t *testing.T) {
 			fields: fields{
 				dir: "./testdata/misconfig/terraform/relative-paths/child",
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: 2,
 						Misconfigurations: []types.Misconfiguration{
@@ -653,11 +652,77 @@ func TestTerraformMisconfigurationScan(t *testing.T) {
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/terraform/relative-paths/child",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
+				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
+				BlobIDs: []string{
+					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
+				},
+			},
+		},
+		{
+			name: "scan raw config",
+			artifactOpt: artifact.Option{
+				MisconfScannerOption: misconf.ScannerOption{
+					RawConfigScanners: []types.ConfigType{types.Terraform},
+				},
+			},
+			fields: fields{
+				dir: "./testdata/misconfig/terraform/single-failure",
+			},
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
+					BlobInfo: types.BlobInfo{
+						SchemaVersion: 2,
+						Misconfigurations: []types.Misconfiguration{
+							{
+								FileType: "terraform",
+								FilePath: "main.tf",
+								Failures: types.MisconfResults{
+									{
+										Namespace:      "user.something",
+										Query:          "data.user.something.deny",
+										Message:        "Empty bucket name!",
+										PolicyMetadata: terraformPolicyMetadata,
+										CauseMetadata: types.CauseMetadata{
+											Resource:  "aws_s3_bucket.asd",
+											Provider:  "Generic",
+											Service:   "general",
+											StartLine: 1,
+											EndLine:   3,
+										},
+									},
+									{
+										Namespace: "user.test002",
+										Query:     "data.user.test002.deny",
+										Message:   "Empty bucket name!",
+										PolicyMetadata: types.PolicyMetadata{
+											ID:       "TEST002",
+											AVDID:    "AVD-TEST-0002",
+											Type:     "Terraform Security Check",
+											Title:    "Test policy",
+											Severity: "LOW",
+										},
+										CauseMetadata: types.CauseMetadata{
+											Resource:  "aws_s3_bucket.asd",
+											Provider:  "Terraform-Raw",
+											Service:   "general",
+											StartLine: 1,
+											EndLine:   3,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			want: artifact.Reference{
+				Name: "testdata/misconfig/terraform/single-failure",
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -665,13 +730,13 @@ func TestTerraformMisconfigurationScan(t *testing.T) {
 			},
 		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Set fake UUID for consistent test results
 			uuid.SetFakeUUID(t, "3ff14136-e09f-4df9-80ea-%012d")
 
-			c := new(cache.MockArtifactCache)
-			c.ApplyPutBlobExpectation(tt.putBlobExpectation)
+			c := cachetest.NewCache(t, nil)
 			tt.artifactOpt.DisabledHandlers = []types.HandlerType{
 				types.SystemFileFilteringPostHandler,
 			}
@@ -681,9 +746,10 @@ func TestTerraformMisconfigurationScan(t *testing.T) {
 			a, err := NewArtifact(tt.fields.dir, c, walker.NewFS(), tt.artifactOpt)
 			require.NoError(t, err)
 
-			got, err := a.Inspect(context.Background())
+			got, err := a.Inspect(t.Context())
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
+			cachetest.AssertBlobs(t, c, tt.wantBlobs)
 		})
 	}
 }
@@ -738,20 +804,19 @@ func TestTerraformPlanSnapshotMisconfScan(t *testing.T) {
 		dir string
 	}
 	tests := []struct {
-		name               string
-		fields             fields
-		putBlobExpectation cache.ArtifactCachePutBlobExpectation
-		want               artifact.Reference
+		name      string
+		fields    fields
+		wantBlobs []cachetest.WantBlob
+		want      artifact.Reference
 	}{
 		{
 			name: "single failure",
 			fields: fields{
-
 				dir: "./testdata/misconfig/terraformplan/snapshots/single-failure",
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: 2,
 						Misconfigurations: []types.Misconfiguration{
@@ -777,11 +842,10 @@ func TestTerraformPlanSnapshotMisconfScan(t *testing.T) {
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/terraformplan/snapshots/single-failure",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -793,9 +857,9 @@ func TestTerraformPlanSnapshotMisconfScan(t *testing.T) {
 			fields: fields{
 				dir: "./testdata/misconfig/terraformplan/snapshots/multiple-failures",
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: 2,
 						Misconfigurations: []types.Misconfiguration{
@@ -853,11 +917,10 @@ func TestTerraformPlanSnapshotMisconfScan(t *testing.T) {
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/terraformplan/snapshots/multiple-failures",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -869,9 +932,9 @@ func TestTerraformPlanSnapshotMisconfScan(t *testing.T) {
 			fields: fields{
 				dir: "./testdata/misconfig/terraformplan/snapshots/passed",
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: 2,
 						Misconfigurations: []types.Misconfiguration{
@@ -893,11 +956,10 @@ func TestTerraformPlanSnapshotMisconfScan(t *testing.T) {
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/terraformplan/snapshots/passed",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -918,8 +980,7 @@ func TestTerraformPlanSnapshotMisconfScan(t *testing.T) {
 			_, err = f.WriteString(emptyBucketCheck)
 			require.NoError(t, err)
 
-			c := new(cache.MockArtifactCache)
-			c.ApplyPutBlobExpectation(tt.putBlobExpectation)
+			c := cachetest.NewCache(t, nil)
 
 			opt := artifact.Option{
 				DisabledHandlers: []types.HandlerType{
@@ -938,9 +999,10 @@ func TestTerraformPlanSnapshotMisconfScan(t *testing.T) {
 			a, err := NewArtifact(tt.fields.dir, c, walker.NewFS(), opt)
 			require.NoError(t, err)
 
-			got, err := a.Inspect(context.Background())
+			got, err := a.Inspect(t.Context())
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
+			cachetest.AssertBlobs(t, c, tt.wantBlobs)
 		})
 	}
 }
@@ -950,11 +1012,11 @@ func TestCloudFormationMisconfigurationScan(t *testing.T) {
 		dir string
 	}
 	tests := []struct {
-		name               string
-		fields             fields
-		putBlobExpectation cache.ArtifactCachePutBlobExpectation
-		artifactOpt        artifact.Option
-		want               artifact.Reference
+		name        string
+		fields      fields
+		wantBlobs   []cachetest.WantBlob
+		artifactOpt artifact.Option
+		want        artifact.Reference
 	}{
 		{
 			name: "single failure",
@@ -968,9 +1030,9 @@ func TestCloudFormationMisconfigurationScan(t *testing.T) {
 					DisableEmbeddedLibraries: true,
 				},
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: types.BlobJSONSchemaVersion,
 						Misconfigurations: []types.Misconfiguration{
@@ -1005,11 +1067,10 @@ func TestCloudFormationMisconfigurationScan(t *testing.T) {
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/cloudformation/single-failure/src",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -1028,9 +1089,9 @@ func TestCloudFormationMisconfigurationScan(t *testing.T) {
 					DisableEmbeddedLibraries: true,
 				},
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: 2,
 						Misconfigurations: []types.Misconfiguration{
@@ -1087,11 +1148,10 @@ func TestCloudFormationMisconfigurationScan(t *testing.T) {
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/cloudformation/multiple-failures/src",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -1110,18 +1170,17 @@ func TestCloudFormationMisconfigurationScan(t *testing.T) {
 					DisableEmbeddedLibraries: true,
 				},
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: types.BlobJSONSchemaVersion,
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/cloudformation/no-results/src",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -1141,9 +1200,9 @@ func TestCloudFormationMisconfigurationScan(t *testing.T) {
 					DisableEmbeddedLibraries: true,
 				},
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: types.BlobJSONSchemaVersion,
 						Misconfigurations: []types.Misconfiguration{
@@ -1173,11 +1232,10 @@ func TestCloudFormationMisconfigurationScan(t *testing.T) {
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/cloudformation/params/code/src",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -1196,9 +1254,9 @@ func TestCloudFormationMisconfigurationScan(t *testing.T) {
 					DisableEmbeddedLibraries: true,
 				},
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: types.BlobJSONSchemaVersion,
 						Misconfigurations: []types.Misconfiguration{
@@ -1229,11 +1287,10 @@ func TestCloudFormationMisconfigurationScan(t *testing.T) {
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/cloudformation/passed/src",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -1246,8 +1303,7 @@ func TestCloudFormationMisconfigurationScan(t *testing.T) {
 			// Set fake UUID for consistent test results
 			uuid.SetFakeUUID(t, "3ff14136-e09f-4df9-80ea-%012d")
 
-			c := new(cache.MockArtifactCache)
-			c.ApplyPutBlobExpectation(tt.putBlobExpectation)
+			c := cachetest.NewCache(t, nil)
 			tt.artifactOpt.DisabledHandlers = []types.HandlerType{
 				types.SystemFileFilteringPostHandler,
 			}
@@ -1255,9 +1311,10 @@ func TestCloudFormationMisconfigurationScan(t *testing.T) {
 			a, err := NewArtifact(tt.fields.dir, c, walker.NewFS(), tt.artifactOpt)
 			require.NoError(t, err)
 
-			got, err := a.Inspect(context.Background())
+			got, err := a.Inspect(t.Context())
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
+			cachetest.AssertBlobs(t, c, tt.wantBlobs)
 		})
 	}
 }
@@ -1267,11 +1324,11 @@ func TestDockerfileMisconfigurationScan(t *testing.T) {
 		dir string
 	}
 	tests := []struct {
-		name               string
-		fields             fields
-		putBlobExpectation cache.ArtifactCachePutBlobExpectation
-		artifactOpt        artifact.Option
-		want               artifact.Reference
+		name        string
+		fields      fields
+		wantBlobs   []cachetest.WantBlob
+		artifactOpt artifact.Option
+		want        artifact.Reference
 	}{
 		{
 			name: "single failure",
@@ -1285,9 +1342,9 @@ func TestDockerfileMisconfigurationScan(t *testing.T) {
 					DisableEmbeddedLibraries: true,
 				},
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: types.BlobJSONSchemaVersion,
 						Misconfigurations: []types.Misconfiguration{
@@ -1318,11 +1375,10 @@ func TestDockerfileMisconfigurationScan(t *testing.T) {
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/dockerfile/single-failure/src",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -1341,9 +1397,9 @@ func TestDockerfileMisconfigurationScan(t *testing.T) {
 					DisableEmbeddedLibraries: true,
 				},
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: types.BlobJSONSchemaVersion,
 						Misconfigurations: []types.Misconfiguration{
@@ -1374,11 +1430,10 @@ func TestDockerfileMisconfigurationScan(t *testing.T) {
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/dockerfile/multiple-failures/src",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -1396,18 +1451,17 @@ func TestDockerfileMisconfigurationScan(t *testing.T) {
 					PolicyPaths: []string{"./testdata/misconfig/dockerfile/no-results/rego"},
 				},
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: types.BlobJSONSchemaVersion,
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/dockerfile/no-results/src",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -1426,9 +1480,9 @@ func TestDockerfileMisconfigurationScan(t *testing.T) {
 					DisableEmbeddedLibraries: true,
 				},
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: types.BlobJSONSchemaVersion,
 						Misconfigurations: []types.Misconfiguration{
@@ -1461,11 +1515,10 @@ func TestDockerfileMisconfigurationScan(t *testing.T) {
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/dockerfile/passed/src",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -1478,8 +1531,7 @@ func TestDockerfileMisconfigurationScan(t *testing.T) {
 			// Set fake UUID for consistent test results
 			uuid.SetFakeUUID(t, "3ff14136-e09f-4df9-80ea-%012d")
 
-			c := new(cache.MockArtifactCache)
-			c.ApplyPutBlobExpectation(tt.putBlobExpectation)
+			c := cachetest.NewCache(t, nil)
 			tt.artifactOpt.DisabledHandlers = []types.HandlerType{
 				types.SystemFileFilteringPostHandler,
 			}
@@ -1487,9 +1539,10 @@ func TestDockerfileMisconfigurationScan(t *testing.T) {
 			a, err := NewArtifact(tt.fields.dir, c, walker.NewFS(), tt.artifactOpt)
 			require.NoError(t, err)
 
-			got, err := a.Inspect(context.Background())
+			got, err := a.Inspect(t.Context())
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
+			cachetest.AssertBlobs(t, c, tt.wantBlobs)
 		})
 	}
 }
@@ -1499,11 +1552,11 @@ func TestKubernetesMisconfigurationScan(t *testing.T) {
 		dir string
 	}
 	tests := []struct {
-		name               string
-		fields             fields
-		putBlobExpectation cache.ArtifactCachePutBlobExpectation
-		artifactOpt        artifact.Option
-		want               artifact.Reference
+		name        string
+		fields      fields
+		wantBlobs   []cachetest.WantBlob
+		artifactOpt artifact.Option
+		want        artifact.Reference
 	}{
 		{
 			name: "single failure",
@@ -1517,9 +1570,9 @@ func TestKubernetesMisconfigurationScan(t *testing.T) {
 					DisableEmbeddedLibraries: true,
 				},
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: types.BlobJSONSchemaVersion,
 						Misconfigurations: []types.Misconfiguration{
@@ -1555,11 +1608,10 @@ func TestKubernetesMisconfigurationScan(t *testing.T) {
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/kubernetes/single-failure/src",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -1578,9 +1630,9 @@ func TestKubernetesMisconfigurationScan(t *testing.T) {
 					DisableEmbeddedLibraries: true,
 				},
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: types.BlobJSONSchemaVersion,
 						Misconfigurations: []types.Misconfiguration{
@@ -1639,11 +1691,10 @@ func TestKubernetesMisconfigurationScan(t *testing.T) {
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/kubernetes/multiple-failures/src",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -1661,18 +1712,17 @@ func TestKubernetesMisconfigurationScan(t *testing.T) {
 					PolicyPaths: []string{"./testdata/misconfig/kubernetes/no-results/rego"},
 				},
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: types.BlobJSONSchemaVersion,
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/kubernetes/no-results/src",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -1691,9 +1741,9 @@ func TestKubernetesMisconfigurationScan(t *testing.T) {
 					DisableEmbeddedLibraries: true,
 				},
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: types.BlobJSONSchemaVersion,
 						Misconfigurations: []types.Misconfiguration{
@@ -1726,11 +1776,10 @@ func TestKubernetesMisconfigurationScan(t *testing.T) {
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/kubernetes/passed/src",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -1743,8 +1792,7 @@ func TestKubernetesMisconfigurationScan(t *testing.T) {
 			// Set fake UUID for consistent test results
 			uuid.SetFakeUUID(t, "3ff14136-e09f-4df9-80ea-%012d")
 
-			c := new(cache.MockArtifactCache)
-			c.ApplyPutBlobExpectation(tt.putBlobExpectation)
+			c := cachetest.NewCache(t, nil)
 			tt.artifactOpt.DisabledHandlers = []types.HandlerType{
 				types.SystemFileFilteringPostHandler,
 			}
@@ -1752,9 +1800,10 @@ func TestKubernetesMisconfigurationScan(t *testing.T) {
 			a, err := NewArtifact(tt.fields.dir, c, walker.NewFS(), tt.artifactOpt)
 			require.NoError(t, err)
 
-			got, err := a.Inspect(context.Background())
+			got, err := a.Inspect(t.Context())
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
+			cachetest.AssertBlobs(t, c, tt.wantBlobs)
 		})
 	}
 }
@@ -1764,11 +1813,11 @@ func TestAzureARMMisconfigurationScan(t *testing.T) {
 		dir string
 	}
 	tests := []struct {
-		name               string
-		fields             fields
-		putBlobExpectation cache.ArtifactCachePutBlobExpectation
-		artifactOpt        artifact.Option
-		want               artifact.Reference
+		name        string
+		fields      fields
+		wantBlobs   []cachetest.WantBlob
+		artifactOpt artifact.Option
+		want        artifact.Reference
 	}{
 		{
 			name: "single failure",
@@ -1781,9 +1830,9 @@ func TestAzureARMMisconfigurationScan(t *testing.T) {
 					PolicyPaths: []string{"./testdata/misconfig/azurearm/single-failure/rego"},
 				},
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: 2,
 						Misconfigurations: []types.Misconfiguration{
@@ -1818,11 +1867,10 @@ func TestAzureARMMisconfigurationScan(t *testing.T) {
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/azurearm/single-failure/src",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -1840,9 +1888,9 @@ func TestAzureARMMisconfigurationScan(t *testing.T) {
 					PolicyPaths: []string{"./testdata/misconfig/azurearm/multiple-failures/rego"},
 				},
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: 2,
 						Misconfigurations: []types.Misconfiguration{
@@ -1899,11 +1947,10 @@ func TestAzureARMMisconfigurationScan(t *testing.T) {
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/azurearm/multiple-failures/src",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -1921,18 +1968,17 @@ func TestAzureARMMisconfigurationScan(t *testing.T) {
 					PolicyPaths: []string{"./testdata/misconfig/azurearm/no-results/rego"},
 				},
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: types.BlobJSONSchemaVersion,
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/azurearm/no-results/src",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -1950,9 +1996,9 @@ func TestAzureARMMisconfigurationScan(t *testing.T) {
 					PolicyPaths: []string{"./testdata/misconfig/azurearm/passed/rego"},
 				},
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: 2,
 						Misconfigurations: []types.Misconfiguration{
@@ -1983,11 +2029,10 @@ func TestAzureARMMisconfigurationScan(t *testing.T) {
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/azurearm/passed/src",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
@@ -2000,8 +2045,7 @@ func TestAzureARMMisconfigurationScan(t *testing.T) {
 			// Set fake UUID for consistent test results
 			uuid.SetFakeUUID(t, "3ff14136-e09f-4df9-80ea-%012d")
 
-			c := new(cache.MockArtifactCache)
-			c.ApplyPutBlobExpectation(tt.putBlobExpectation)
+			c := cachetest.NewCache(t, nil)
 			tt.artifactOpt.DisabledHandlers = []types.HandlerType{
 				types.SystemFileFilteringPostHandler,
 			}
@@ -2009,9 +2053,10 @@ func TestAzureARMMisconfigurationScan(t *testing.T) {
 			a, err := NewArtifact(tt.fields.dir, c, walker.NewFS(), tt.artifactOpt)
 			require.NoError(t, err)
 
-			got, err := a.Inspect(context.Background())
+			got, err := a.Inspect(t.Context())
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
+			cachetest.AssertBlobs(t, c, tt.wantBlobs)
 		})
 	}
 }
@@ -2021,11 +2066,11 @@ func TestMixedConfigurationScan(t *testing.T) {
 		dir string
 	}
 	tests := []struct {
-		name               string
-		fields             fields
-		putBlobExpectation cache.ArtifactCachePutBlobExpectation
-		artifactOpt        artifact.Option
-		want               artifact.Reference
+		name        string
+		fields      fields
+		wantBlobs   []cachetest.WantBlob
+		artifactOpt artifact.Option
+		want        artifact.Reference
 	}{
 		{
 			name: "single failure each within terraform and cloudformation",
@@ -2039,9 +2084,9 @@ func TestMixedConfigurationScan(t *testing.T) {
 					DisableEmbeddedLibraries: true,
 				},
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: 2,
 						Misconfigurations: []types.Misconfiguration{
@@ -2104,19 +2149,20 @@ func TestMixedConfigurationScan(t *testing.T) {
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/mixed/src",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := new(cache.MockArtifactCache)
-			c.ApplyPutBlobExpectation(tt.putBlobExpectation)
+			// Set fake UUID for consistent test results
+			uuid.SetFakeUUID(t, "3ff14136-e09f-4df9-80ea-%012d")
+
+			c := cachetest.NewCache(t, nil)
 			tt.artifactOpt.DisabledHandlers = []types.HandlerType{
 				types.SystemFileFilteringPostHandler,
 			}
@@ -2124,12 +2170,13 @@ func TestMixedConfigurationScan(t *testing.T) {
 			a, err := NewArtifact(tt.fields.dir, c, walker.NewFS(), tt.artifactOpt)
 			require.NoError(t, err)
 
-			got, err := a.Inspect(context.Background())
+			got, err := a.Inspect(t.Context())
 			require.NoError(t, err)
 			require.NotNil(t, got)
 
 			assert.Equal(t, tt.want.Name, got.Name)
 			assert.Equal(t, tt.want.Type, got.Type)
+			cachetest.AssertBlobs(t, c, tt.wantBlobs)
 		})
 	}
 }
@@ -2141,11 +2188,11 @@ func TestJSONConfigScan(t *testing.T) {
 	}
 
 	tests := []struct {
-		name               string
-		fields             fields
-		artifactOpt        artifact.Option
-		putBlobExpectation cache.ArtifactCachePutBlobExpectation
-		want               artifact.Reference
+		name        string
+		fields      fields
+		artifactOpt artifact.Option
+		wantBlobs   []cachetest.WantBlob
+		want        artifact.Reference
 	}{
 		{
 			name: "happy path without custom schema",
@@ -2158,9 +2205,9 @@ func TestJSONConfigScan(t *testing.T) {
 					PolicyPaths: []string{"./testdata/misconfig/json/passed/checks"},
 				},
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: types.BlobJSONSchemaVersion,
 						Misconfigurations: []types.Misconfiguration{
@@ -2211,11 +2258,10 @@ func TestJSONConfigScan(t *testing.T) {
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/json/passed/src",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 			},
 		},
 		{
@@ -2230,9 +2276,9 @@ func TestJSONConfigScan(t *testing.T) {
 					PolicyPaths: []string{"./testdata/misconfig/json/with-schema/checks"},
 				},
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: types.BlobJSONSchemaVersion,
 						Misconfigurations: []types.Misconfiguration{
@@ -2261,19 +2307,20 @@ func TestJSONConfigScan(t *testing.T) {
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/json/with-schema/src",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := new(cache.MockArtifactCache)
-			c.ApplyPutBlobExpectation(tt.putBlobExpectation)
+			// Set fake UUID for consistent test results
+			uuid.SetFakeUUID(t, "3ff14136-e09f-4df9-80ea-%012d")
+
+			c := cachetest.NewCache(t, nil)
 
 			tt.artifactOpt.MisconfScannerOption.DisableEmbeddedPolicies = true
 			if len(tt.fields.schemas) > 0 {
@@ -2285,12 +2332,13 @@ func TestJSONConfigScan(t *testing.T) {
 			a, err := NewArtifact(tt.fields.dir, c, walker.NewFS(), tt.artifactOpt)
 			require.NoError(t, err)
 
-			got, err := a.Inspect(context.Background())
+			got, err := a.Inspect(t.Context())
 			require.NoError(t, err)
 			require.NotNil(t, got)
 
 			assert.Equal(t, tt.want.Name, got.Name)
 			assert.Equal(t, tt.want.Type, got.Type)
+			cachetest.AssertBlobs(t, c, tt.wantBlobs)
 		})
 	}
 }
@@ -2302,11 +2350,12 @@ func TestYAMLConfigScan(t *testing.T) {
 	}
 
 	tests := []struct {
-		name               string
-		fields             fields
-		artifactOpt        artifact.Option
-		putBlobExpectation cache.ArtifactCachePutBlobExpectation
-		want               artifact.Reference
+		name        string
+		fields      fields
+		artifactOpt artifact.Option
+		wantBlobs   []cachetest.WantBlob
+		want        artifact.Reference
+		wantErr     string
 	}{
 		{
 			name: "happy path without custom schema",
@@ -2319,9 +2368,9 @@ func TestYAMLConfigScan(t *testing.T) {
 					PolicyPaths: []string{"./testdata/misconfig/yaml/passed/checks"},
 				},
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: types.BlobJSONSchemaVersion,
 						Misconfigurations: []types.Misconfiguration{
@@ -2341,7 +2390,7 @@ func TestYAMLConfigScan(t *testing.T) {
 											Severity: "LOW",
 										},
 										CauseMetadata: types.CauseMetadata{
-											Provider: "Generic",
+											Provider: "Yaml",
 											Service:  "general",
 										},
 									},
@@ -2363,7 +2412,7 @@ func TestYAMLConfigScan(t *testing.T) {
 											Severity: "LOW",
 										},
 										CauseMetadata: types.CauseMetadata{
-											Provider: "Generic",
+											Provider: "Yaml",
 											Service:  "general",
 										},
 									},
@@ -2372,11 +2421,10 @@ func TestYAMLConfigScan(t *testing.T) {
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/yaml/passed/src",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 			},
 		},
 		{
@@ -2391,9 +2439,9 @@ func TestYAMLConfigScan(t *testing.T) {
 					PolicyPaths: []string{"./testdata/misconfig/yaml/with-schema/checks"},
 				},
 			},
-			putBlobExpectation: cache.ArtifactCachePutBlobExpectation{
-				Args: cache.ArtifactCachePutBlobArgs{
-					BlobIDAnything: true,
+			wantBlobs: []cachetest.WantBlob{
+				{
+					ID: "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 					BlobInfo: types.BlobInfo{
 						SchemaVersion: types.BlobJSONSchemaVersion,
 						Misconfigurations: []types.Misconfiguration{
@@ -2413,7 +2461,7 @@ func TestYAMLConfigScan(t *testing.T) {
 											Severity: "LOW",
 										},
 										CauseMetadata: types.CauseMetadata{
-											Provider: "Generic",
+											Provider: "Yaml",
 											Service:  "general",
 										},
 									},
@@ -2422,19 +2470,54 @@ func TestYAMLConfigScan(t *testing.T) {
 						},
 					},
 				},
-				Returns: cache.ArtifactCachePutBlobReturns{},
 			},
 			want: artifact.Reference{
 				Name: "testdata/misconfig/yaml/with-schema/src",
-				Type: artifact.TypeFilesystem,
+				Type: types.TypeFilesystem,
 			},
+		},
+		{
+			name: "with rego error limit",
+			fields: fields{
+				dir: "./testdata/misconfig/yaml/with-rego-error-limit/src",
+			},
+			artifactOpt: artifact.Option{
+				MisconfScannerOption: misconf.ScannerOption{
+					Namespaces: []string{"user"},
+					PolicyPaths: []string{
+						"./testdata/misconfig/yaml/with-rego-error-limit/checks/test_2_errors.rego",
+						"./testdata/misconfig/yaml/with-rego-error-limit/checks/test.json",
+					},
+					RegoErrorLimit: 1,
+				},
+			},
+			wantErr: "ego_type_error: undefined ref: input.wrong_ref",
+		},
+		{
+			name: "with Rego error limit 0",
+			fields: fields{
+				dir: "./testdata/misconfig/yaml/with-rego-error-limit/src",
+			},
+			artifactOpt: artifact.Option{
+				MisconfScannerOption: misconf.ScannerOption{
+					Namespaces: []string{"user"},
+					PolicyPaths: []string{
+						"./testdata/misconfig/yaml/with-rego-error-limit/checks/test_1_error.rego",
+						"./testdata/misconfig/yaml/with-rego-error-limit/checks/test.json",
+					},
+					RegoErrorLimit: 0,
+				},
+			},
+			wantErr: "ego_type_error: undefined ref: input.wrong_ref",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := new(cache.MockArtifactCache)
-			c.ApplyPutBlobExpectation(tt.putBlobExpectation)
+			// Set fake UUID for consistent test results
+			uuid.SetFakeUUID(t, "3ff14136-e09f-4df9-80ea-%012d")
+
+			c := cachetest.NewCache(t, nil)
 
 			tt.artifactOpt.MisconfScannerOption.DisableEmbeddedPolicies = true
 			if len(tt.fields.schemas) > 0 {
@@ -2446,12 +2529,178 @@ func TestYAMLConfigScan(t *testing.T) {
 			a, err := NewArtifact(tt.fields.dir, c, walker.NewFS(), tt.artifactOpt)
 			require.NoError(t, err)
 
-			got, err := a.Inspect(context.Background())
+			got, err := a.Inspect(t.Context())
+			if tt.wantErr != "" {
+				assert.ErrorContains(t, err, tt.wantErr)
+				return
+			}
 			require.NoError(t, err)
 			require.NotNil(t, got)
 
 			assert.Equal(t, tt.want.Name, got.Name)
 			assert.Equal(t, tt.want.Type, got.Type)
+			cachetest.AssertBlobs(t, c, tt.wantBlobs)
 		})
 	}
+}
+
+// recordingWalker wraps an existing walker and records which paths were walked
+type recordingWalker struct {
+	base        Walker
+	walkedRoots []string
+}
+
+func newRecordingWalker(base Walker) *recordingWalker {
+	return &recordingWalker{
+		base: base,
+	}
+}
+
+func (w *recordingWalker) Walk(root string, option walker.Option, walkFn walker.WalkFunc) error {
+	w.walkedRoots = append(w.walkedRoots, filepath.ToSlash(root))
+	// Call the original walker
+	return w.base.Walk(root, option, walkFn)
+}
+
+// TestArtifact_AnalysisStrategy tests the different analysis strategies
+func TestArtifact_AnalysisStrategy(t *testing.T) {
+	// Use testdata/alpine directly
+	testDir := "testdata/alpine"
+
+	tests := []struct {
+		name              string
+		disabledAnalyzers []analyzer.Type
+		wantRoots         []string
+	}{
+		{
+			name:              "static paths",
+			disabledAnalyzers: append(analyzer.TypeConfigFiles, analyzer.TypePip, analyzer.TypeSecret),
+			wantRoots: []string{
+				"testdata/alpine/etc/alpine-release",
+				"testdata/alpine/lib/apk/db/installed",
+				"testdata/alpine/usr/lib/apk/db/installed",
+			},
+		},
+		{
+			name: "traversing root dir",
+			wantRoots: []string{
+				testDir, // only the root directory is walked
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a new artifact with the recording walker
+			baseWalker := walker.NewFS()
+			rw := newRecordingWalker(baseWalker)
+
+			// Create artifact with recording walker
+			a, err := NewArtifact(testDir, cache.NewMemoryCache(), rw, artifact.Option{
+				DisabledAnalyzers: tt.disabledAnalyzers,
+			})
+			require.NoError(t, err)
+
+			// Run the inspection
+			_, err = a.Inspect(t.Context())
+			require.NoError(t, err)
+
+			// Check if the walked roots match the expected roots
+			assert.ElementsMatch(t, tt.wantRoots, rw.walkedRoots)
+		})
+	}
+}
+
+func Test_sanitizeRemoteURL(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "https with user:pass",
+			in:   "https://user:token@github.com/org/repo.git",
+			want: "https://github.com/org/repo.git",
+		},
+		{
+			name: "port in authority with userinfo",
+			in:   "https://user:pass@host:8443/repo.git",
+			want: "https://host:8443/repo.git",
+		},
+		{
+			name: "http with username only",
+			in:   "http://user@github.com/org/repo",
+			want: "http://github.com/org/repo",
+		},
+		{
+			name: "double scheme after userinfo",
+			in:   "https://gitlab-ci-token:glcbt-64_QwERTyuiOp-AsD2NgCJ7@example.com/gitrepo.git",
+			want: "https://example.com/gitrepo.git",
+		},
+		{
+			name: "ssh scheme with username",
+			in:   "ssh://git@github.com/org/repo.git",
+			want: "ssh://github.com/org/repo.git",
+		},
+		{
+			name: "scp-like ssh unchanged",
+			in:   "git@github.com:org/repo.git",
+			want: "git@github.com:org/repo.git",
+		},
+		{
+			name: "already clean https",
+			in:   "https://github.com/org/repo.git",
+			want: "https://github.com/org/repo.git",
+		},
+		{
+			name: "no scheme left as-is",
+			in:   "github.com/org/repo.git",
+			want: "github.com/org/repo.git",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := sanitizeRemoteURL(tt.in)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// userErrorAnalyzer fails every matching file with a *types.UserError,
+// emulating a fatal analyzer error such as a remote Maven 429.
+type userErrorAnalyzer struct{}
+
+func (userErrorAnalyzer) Type() analyzer.Type { return "user-error-test" }
+func (userErrorAnalyzer) Version() int        { return 1 }
+func (userErrorAnalyzer) Required(filePath string, _ os.FileInfo) bool {
+	return strings.HasSuffix(filePath, ".usererror")
+}
+
+func (userErrorAnalyzer) Analyze(_ context.Context, _ analyzer.AnalysisInput) (*analyzer.AnalysisResult, error) {
+	return nil, &trivytypes.UserError{Message: "429 Too Many Requests"}
+}
+
+// TestArtifact_Inspect_AnalyzeErrorNotMasked is a regression test for #10790:
+// a fatal analyzer error (a remote Maven 429, as *types.UserError) must be
+// surfaced, not masked by the context.Canceled the walk hits after egCtx cancels.
+func TestArtifact_Inspect_AnalyzeErrorNotMasked(t *testing.T) {
+	dir := t.TempDir()
+	// Parallel=1 with several files: the first file cancels egCtx, so a later
+	// file's semaphore acquire fails with context.Canceled.
+	for i := range 10 {
+		require.NoError(t, os.WriteFile(
+			filepath.Join(dir, fmt.Sprintf("%d.usererror", i)), []byte("x"), 0o600))
+	}
+
+	analyzer.RegisterAnalyzer(userErrorAnalyzer{})
+	t.Cleanup(func() { analyzer.DeregisterAnalyzer("user-error-test") })
+
+	a, err := NewArtifact(dir, cache.NewMemoryCache(), walker.NewFS(), artifact.Option{Parallel: 1})
+	require.NoError(t, err)
+
+	_, err = a.Inspect(t.Context())
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "429 Too Many Requests")
 }

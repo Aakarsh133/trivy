@@ -3,6 +3,8 @@ package poetry
 import (
 	"slices"
 	"sort"
+	"context"
+	"slices"
 
 	"github.com/BurntSushi/toml"
 	"golang.org/x/xerrors"
@@ -40,7 +42,7 @@ func NewParser() *Parser {
 	}
 }
 
-func (p *Parser) Parse(r xio.ReadSeekerAt) ([]ftypes.Package, []ftypes.Dependency, error) {
+func (p *Parser) Parse(_ context.Context, r xio.ReadSeekerAt) ([]ftypes.Package, []ftypes.Dependency, error) {
 	var lockfile Lockfile
 	if _, err := toml.NewDecoder(r).Decode(&lockfile); err != nil {
 		return nil, nil, xerrors.Errorf("failed to decode poetry.lock: %w", err)
@@ -101,14 +103,12 @@ func (p *Parser) parseDependencies(deps map[string]any, pkgVersions map[string][
 			dependsOn = append(dependsOn, dep)
 		}
 	}
-	sort.Slice(dependsOn, func(i, j int) bool {
-		return dependsOn[i] < dependsOn[j]
-	})
+	slices.Sort(dependsOn)
 	return dependsOn
 }
 
 func (p *Parser) parseDependency(name string, versRange any, pkgVersions map[string][]string) (string, error) {
-	name = python.NormalizePkgName(name)
+	name = python.NormalizePkgName(name, true)
 	vers, ok := pkgVersions[name]
 	if !ok {
 		return "", xerrors.Errorf("no version found for %q", name)

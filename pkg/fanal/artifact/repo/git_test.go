@@ -3,11 +3,12 @@
 package repo
 
 import (
-	"context"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/go-git/go-git/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -23,7 +24,7 @@ import (
 )
 
 func TestNewArtifact(t *testing.T) {
-	ts := gittest.NewTestServer(t)
+	ts := gittest.NewTestServer(t, gittest.Options{})
 	defer ts.Close()
 
 	type args struct {
@@ -100,7 +101,7 @@ func TestNewArtifact(t *testing.T) {
 				c:          nil,
 				noProgress: false,
 			},
-			assertion: func(t assert.TestingT, err error, args ...any) bool {
+			assertion: func(t assert.TestingT, err error, _ ...any) bool {
 				return assert.ErrorContains(t, err, "repository not found")
 			},
 		},
@@ -111,7 +112,7 @@ func TestNewArtifact(t *testing.T) {
 				c:          nil,
 				noProgress: false,
 			},
-			assertion: func(t assert.TestingT, err error, args ...any) bool {
+			assertion: func(t assert.TestingT, err error, _ ...any) bool {
 				return assert.ErrorContains(t, err, "url parse error")
 			},
 		},
@@ -122,7 +123,7 @@ func TestNewArtifact(t *testing.T) {
 				c:          nil,
 				repoBranch: "invalid-branch",
 			},
-			assertion: func(t assert.TestingT, err error, args ...any) bool {
+			assertion: func(t assert.TestingT, err error, _ ...any) bool {
 				return assert.ErrorContains(t, err, `couldn't find remote ref "refs/heads/invalid-branch"`)
 			},
 		},
@@ -133,7 +134,7 @@ func TestNewArtifact(t *testing.T) {
 				c:       nil,
 				repoTag: "v1.0.9",
 			},
-			assertion: func(t assert.TestingT, err error, args ...any) bool {
+			assertion: func(t assert.TestingT, err error, _ ...any) bool {
 				return assert.ErrorContains(t, err, `couldn't find remote ref "refs/tags/v1.0.9"`)
 			},
 		},
@@ -144,7 +145,7 @@ func TestNewArtifact(t *testing.T) {
 				c:          nil,
 				repoCommit: "6ac152fe2b87cb5e243414df71790a32912e778e",
 			},
-			assertion: func(t assert.TestingT, err error, args ...any) bool {
+			assertion: func(t assert.TestingT, err error, _ ...any) bool {
 				return assert.ErrorContains(t, err, "git checkout error: object not found")
 			},
 		},
@@ -165,7 +166,7 @@ func TestNewArtifact(t *testing.T) {
 }
 
 func TestArtifact_Inspect(t *testing.T) {
-	ts := gittest.NewTestServer(t)
+	ts := gittest.NewTestServer(t, gittest.Options{})
 	defer ts.Close()
 
 	tests := []struct {
@@ -181,10 +182,19 @@ func TestArtifact_Inspect(t *testing.T) {
 			rawurl: ts.URL + "/test-repo.git",
 			want: artifact.Reference{
 				Name: ts.URL + "/test-repo.git",
-				Type: artifact.TypeRepository,
-				ID:   "sha256:dc7c6039424c9fce969d3c2972d261af442a33f13e7494464386dbe280612d4c", // Calculated from commit hash
+				Type: types.TypeRepository,
+				ID:   "sha256:1587f4be90cf95b3e1b733512d674301f5fe4200055f10efa4dbf0d5e590d32d", // Calculated from commit hash
 				BlobIDs: []string{
-					"sha256:dc7c6039424c9fce969d3c2972d261af442a33f13e7494464386dbe280612d4c", // Calculated from commit hash
+					"sha256:1587f4be90cf95b3e1b733512d674301f5fe4200055f10efa4dbf0d5e590d32d", // Calculated from commit hash
+				},
+				RepoMetadata: artifact.RepoMetadata{
+					RepoURL:   ts.URL + "/test-repo.git",
+					Branch:    "main",
+					Tags:      []string{"v0.0.1"},
+					Commit:    "8a19b492a589955c3e70c6ad8efd1e4ec6ae0d35",
+					CommitMsg: "Update README.md",
+					Author:    "Teppei Fukuda <knqyf263@gmail.com>",
+					Committer: "GitHub <noreply@github.com>",
 				},
 			},
 			wantBlobInfo: &types.BlobInfo{
@@ -196,10 +206,19 @@ func TestArtifact_Inspect(t *testing.T) {
 			rawurl: "../../../../internal/gittest/testdata/test-repo",
 			want: artifact.Reference{
 				Name: "../../../../internal/gittest/testdata/test-repo",
-				Type: artifact.TypeRepository,
-				ID:   "sha256:dc7c6039424c9fce969d3c2972d261af442a33f13e7494464386dbe280612d4c", // Calculated from commit hash
+				Type: types.TypeRepository,
+				ID:   "sha256:1587f4be90cf95b3e1b733512d674301f5fe4200055f10efa4dbf0d5e590d32d", // Calculated from commit hash
 				BlobIDs: []string{
-					"sha256:dc7c6039424c9fce969d3c2972d261af442a33f13e7494464386dbe280612d4c", // Calculated from commit hash
+					"sha256:1587f4be90cf95b3e1b733512d674301f5fe4200055f10efa4dbf0d5e590d32d", // Calculated from commit hash
+				},
+				RepoMetadata: artifact.RepoMetadata{
+					RepoURL:   "https://github.com/aquasecurity/trivy-test-repo/",
+					Branch:    "main",
+					Tags:      []string{"v0.0.1"},
+					Commit:    "8a19b492a589955c3e70c6ad8efd1e4ec6ae0d35",
+					CommitMsg: "Update README.md",
+					Author:    "Teppei Fukuda <knqyf263@gmail.com>",
+					Committer: "GitHub <noreply@github.com>",
 				},
 			},
 			wantBlobInfo: &types.BlobInfo{
@@ -210,17 +229,26 @@ func TestArtifact_Inspect(t *testing.T) {
 			name:   "dirty repository",
 			rawurl: "../../../../internal/gittest/testdata/test-repo",
 			setup: func(t *testing.T, dir string, _ cache.ArtifactCache) {
-				require.NoError(t, os.WriteFile(filepath.Join(dir, "new-file.txt"), []byte("test"), 0644))
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "new-file.txt"), []byte("test"), 0o644))
 				t.Cleanup(func() {
 					require.NoError(t, os.Remove(filepath.Join(dir, "new-file.txt")))
 				})
 			},
 			want: artifact.Reference{
 				Name: "../../../../internal/gittest/testdata/test-repo",
-				Type: artifact.TypeRepository,
+				Type: types.TypeRepository,
 				ID:   "sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
 				BlobIDs: []string{
 					"sha256:6f4672e139d4066fd00391df614cdf42bda5f7a3f005d39e1d8600be86157098",
+				},
+				RepoMetadata: artifact.RepoMetadata{
+					RepoURL:   "https://github.com/aquasecurity/trivy-test-repo/",
+					Branch:    "main",
+					Tags:      []string{"v0.0.1"},
+					Commit:    "8a19b492a589955c3e70c6ad8efd1e4ec6ae0d35",
+					CommitMsg: "Update README.md",
+					Author:    "Teppei Fukuda <knqyf263@gmail.com>",
+					Committer: "GitHub <noreply@github.com>",
 				},
 			},
 			wantBlobInfo: &types.BlobInfo{
@@ -230,7 +258,7 @@ func TestArtifact_Inspect(t *testing.T) {
 		{
 			name:   "cache hit",
 			rawurl: "../../../../internal/gittest/testdata/test-repo",
-			setup: func(t *testing.T, dir string, c cache.ArtifactCache) {
+			setup: func(t *testing.T, _ string, c cache.ArtifactCache) {
 				blobInfo := types.BlobInfo{
 					SchemaVersion: types.BlobJSONSchemaVersion,
 					OS: types.OS{
@@ -239,16 +267,25 @@ func TestArtifact_Inspect(t *testing.T) {
 					},
 				}
 				// Store the blob info in the cache to test cache hit
-				cacheKey := "sha256:dc7c6039424c9fce969d3c2972d261af442a33f13e7494464386dbe280612d4c"
-				err := c.PutBlob(cacheKey, blobInfo)
+				cacheKey := "sha256:1587f4be90cf95b3e1b733512d674301f5fe4200055f10efa4dbf0d5e590d32d"
+				err := c.PutBlob(t.Context(), cacheKey, blobInfo)
 				require.NoError(t, err)
 			},
 			want: artifact.Reference{
 				Name: "../../../../internal/gittest/testdata/test-repo",
-				Type: artifact.TypeRepository,
-				ID:   "sha256:dc7c6039424c9fce969d3c2972d261af442a33f13e7494464386dbe280612d4c",
+				Type: types.TypeRepository,
+				ID:   "sha256:1587f4be90cf95b3e1b733512d674301f5fe4200055f10efa4dbf0d5e590d32d",
 				BlobIDs: []string{
-					"sha256:dc7c6039424c9fce969d3c2972d261af442a33f13e7494464386dbe280612d4c",
+					"sha256:1587f4be90cf95b3e1b733512d674301f5fe4200055f10efa4dbf0d5e590d32d",
+				},
+				RepoMetadata: artifact.RepoMetadata{
+					RepoURL:   "https://github.com/aquasecurity/trivy-test-repo/",
+					Branch:    "main",
+					Tags:      []string{"v0.0.1"},
+					Commit:    "8a19b492a589955c3e70c6ad8efd1e4ec6ae0d35",
+					CommitMsg: "Update README.md",
+					Author:    "Teppei Fukuda <knqyf263@gmail.com>",
+					Committer: "GitHub <noreply@github.com>",
 				},
 			},
 			wantBlobInfo: &types.BlobInfo{
@@ -278,7 +315,7 @@ func TestArtifact_Inspect(t *testing.T) {
 			require.NoError(t, err)
 			defer cleanup()
 
-			ref, err := art.Inspect(context.Background())
+			ref, err := art.Inspect(t.Context())
 			if tt.wantErr {
 				assert.Error(t, err)
 				return
@@ -288,11 +325,183 @@ func TestArtifact_Inspect(t *testing.T) {
 			assert.Equal(t, tt.want, ref)
 
 			// Verify cache contents after inspection
-			blobInfo, err := c.GetBlob(tt.want.BlobIDs[0])
+			blobInfo, err := c.GetBlob(t.Context(), tt.want.BlobIDs[0])
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantBlobInfo, &blobInfo, "cache content mismatch")
 		})
 	}
+}
+
+// setupAuthTestServer creates a test server with authentication and returns parsed URL with /test-repo.git path
+func setupAuthTestServer(t *testing.T, username, password string) *url.URL {
+	t.Helper()
+	ts := gittest.NewTestServer(t, gittest.Options{
+		Username: username,
+		Password: password,
+	})
+	t.Cleanup(ts.Close)
+
+	tsURL, err := url.Parse(ts.URL)
+	require.NoError(t, err)
+	tsURL.Path = "/test-repo.git"
+
+	return tsURL
+}
+
+// testInspectArtifact is a helper function to inspect an artifact and assert the results
+func testInspectArtifact(t *testing.T, target, wantRepoURL, wantErr string) {
+	t.Helper()
+	art, cleanup, err := NewArtifact(target, cache.NewMemoryCache(), walker.NewFS(), artifact.Option{})
+	t.Cleanup(cleanup)
+
+	if wantErr != "" {
+		require.ErrorContains(t, err, wantErr)
+		return
+	}
+	require.NoError(t, err)
+
+	// Verify Inspect works
+	ref, err := art.Inspect(t.Context())
+	require.NoError(t, err)
+
+	// Verify the RepoURL
+	assert.Equal(t, wantRepoURL, ref.RepoMetadata.RepoURL)
+
+	// Verify we have blob IDs (indicating successful scan)
+	assert.NotEmpty(t, ref.BlobIDs)
+}
+
+func TestArtifact_InspectWithAuth(t *testing.T) {
+	const (
+		testUsername = "testuser"
+		testPassword = "testpass"
+	)
+
+	// Test with environment variable authentication (GITHUB_TOKEN, GITLAB_TOKEN)
+	t.Run("environment variable authentication", func(t *testing.T) {
+		const testGitUsername = "fanal-aquasecurity-scan" // This is the username used by Trivy
+
+		// Setup test server with authentication
+		tsURL := setupAuthTestServer(t, testGitUsername, testPassword)
+
+		tests := []struct {
+			name        string
+			target      string
+			envVars     map[string]string
+			wantErr     string
+			wantRepoURL string
+		}{
+			{
+				name:   "success with GITHUB_TOKEN",
+				target: tsURL.String(),
+				envVars: map[string]string{
+					"GITHUB_TOKEN": testPassword,
+				},
+				wantRepoURL: tsURL.String(),
+			},
+			{
+				name:   "success with GITLAB_TOKEN",
+				target: tsURL.String(),
+				envVars: map[string]string{
+					"GITLAB_TOKEN": testPassword,
+				},
+				wantRepoURL: tsURL.String(),
+			},
+			{
+				name:    "failure without token",
+				target:  tsURL.String(),
+				wantErr: "authentication required",
+			},
+			{
+				name:   "failure with wrong token",
+				target: tsURL.String(),
+				envVars: map[string]string{
+					"GITHUB_TOKEN": "wrongpassword",
+				},
+				wantErr: "authentication required",
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				// Set test environment variables
+				for key, value := range tt.envVars {
+					t.Setenv(key, value)
+				}
+
+				// Test using helper function
+				testInspectArtifact(t, tt.target, tt.wantRepoURL, tt.wantErr)
+			})
+		}
+	})
+
+	// Test with URL-embedded authentication
+	t.Run("URL embedded authentication", func(t *testing.T) {
+		// Setup test server with authentication
+		tsURL := setupAuthTestServer(t, testUsername, testPassword)
+
+		// Helper function to generate target URL with credentials
+		makeTarget := func(username, password string) string {
+			u := *tsURL // Copy the URL
+			if username != "" && password != "" {
+				u.User = url.UserPassword(username, password)
+			}
+			return u.String()
+		}
+
+		tests := []struct {
+			name        string
+			target      string
+			wantRepoURL string
+			wantErr     string
+		}{
+			{
+				name:        "success with embedded credentials",
+				target:      makeTarget(testUsername, testPassword),
+				wantRepoURL: tsURL.String(),
+			},
+			{
+				name:    "failure with wrong password",
+				target:  makeTarget(testUsername, "wrongpass"),
+				wantErr: "authentication required",
+			},
+			{
+				name:    "failure without credentials",
+				target:  makeTarget("", ""),
+				wantErr: "authentication required",
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				// Test using helper function
+				testInspectArtifact(t, tt.target, tt.wantRepoURL, tt.wantErr)
+			})
+		}
+	})
+
+	// Test cloning with embedded credentials and then scanning the local directory
+	t.Run("clone with credentials then scan local", func(t *testing.T) {
+		// Setup test server with authentication
+		tsURL := setupAuthTestServer(t, testUsername, testPassword)
+
+		// Add credentials to URL
+		u := *tsURL // Copy the URL
+		u.User = url.UserPassword(testUsername, testPassword)
+		targetWithCreds := u.String()
+
+		// Clone the repository with URL-embedded credentials
+		cloneDir := filepath.Join(t.TempDir(), "cloned-repo")
+
+		// Use go-git directly to clone with URL-embedded credentials
+		_, err := git.PlainClone(cloneDir, false, &git.CloneOptions{
+			URL: targetWithCreds,
+		})
+		require.NoError(t, err)
+
+		// Scan and verify the local cloned directory
+		testInspectArtifact(t, cloneDir, tsURL.String(), "")
+	})
 }
 
 func Test_newURL(t *testing.T) {

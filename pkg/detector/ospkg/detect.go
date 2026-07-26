@@ -2,7 +2,8 @@ package ospkg
 
 import (
 	"context"
-	"time"
+	"maps"
+	"slices"
 
 	"github.com/samber/lo"
 	"golang.org/x/xerrors"
@@ -11,12 +12,19 @@ import (
 	"github.com/aquasecurity/trivy/pkg/detector/ospkg/alpine"
 	"github.com/aquasecurity/trivy/pkg/detector/ospkg/amazon"
 	"github.com/aquasecurity/trivy/pkg/detector/ospkg/azure"
+	"github.com/aquasecurity/trivy/pkg/detector/ospkg/bottlerocket"
 	"github.com/aquasecurity/trivy/pkg/detector/ospkg/chainguard"
+	"github.com/aquasecurity/trivy/pkg/detector/ospkg/coreos"
 	"github.com/aquasecurity/trivy/pkg/detector/ospkg/debian"
+	"github.com/aquasecurity/trivy/pkg/detector/ospkg/driver"
+	"github.com/aquasecurity/trivy/pkg/detector/ospkg/echo"
+	"github.com/aquasecurity/trivy/pkg/detector/ospkg/minimos"
 	"github.com/aquasecurity/trivy/pkg/detector/ospkg/oracle"
 	"github.com/aquasecurity/trivy/pkg/detector/ospkg/photon"
 	"github.com/aquasecurity/trivy/pkg/detector/ospkg/redhat"
 	"github.com/aquasecurity/trivy/pkg/detector/ospkg/rocky"
+	"github.com/aquasecurity/trivy/pkg/detector/ospkg/rootio"
+	"github.com/aquasecurity/trivy/pkg/detector/ospkg/seal"
 	"github.com/aquasecurity/trivy/pkg/detector/ospkg/suse"
 	"github.com/aquasecurity/trivy/pkg/detector/ospkg/ubuntu"
 	"github.com/aquasecurity/trivy/pkg/detector/ospkg/wolfi"
@@ -25,15 +33,22 @@ import (
 	"github.com/aquasecurity/trivy/pkg/types"
 )
 
+// Detector detects OS package vulnerabilities.
+type Detector struct {
+	target types.ScanTarget
+	driver driver.Driver
+}
+
 var (
 	// ErrUnsupportedOS defines error for unsupported OS
 	ErrUnsupportedOS = xerrors.New("unsupported os")
 
-	drivers = map[ftypes.OSType]Driver{
+	drivers = map[ftypes.OSType]driver.Driver{
 		ftypes.Alpine:             alpine.NewScanner(),
 		ftypes.Alma:               alma.NewScanner(),
 		ftypes.Amazon:             amazon.NewScanner(),
 		ftypes.Azure:              azure.NewAzureScanner(),
+		ftypes.Bottlerocket:       bottlerocket.NewScanner(),
 		ftypes.CBLMariner:         azure.NewMarinerScanner(),
 		ftypes.Debian:             debian.NewScanner(),
 		ftypes.Ubuntu:             ubuntu.NewScanner(),
@@ -48,37 +63,73 @@ var (
 		ftypes.Photon:             photon.NewScanner(),
 		ftypes.Wolfi:              wolfi.NewScanner(),
 		ftypes.Chainguard:         chainguard.NewScanner(),
+		ftypes.Echo:               echo.NewScanner(),
+		ftypes.MinimOS:            minimos.NewScanner(),
+		ftypes.CoreOS:             coreos.NewScanner(),
+	}
+
+	// providers dynamically generate drivers based on package information
+	// and environment detection. They are tried before standard OS-specific drivers.
+	providers = []driver.Provider{
+		rootio.Provider,
+		seal.Provider,
 	}
 )
 
-// RegisterDriver is defined for extensibility and not supposed to be used in Trivy.
-func RegisterDriver(name ftypes.OSType, driver Driver) {
-	drivers[name] = driver
+// resolver holds the candidate drivers and providers and resolves one for a scan target.
+type resolver struct {
+	drivers   map[ftypes.OSType]driver.Driver
+	providers []driver.Provider
 }
 
-// Driver defines operations for OS package scan
-type Driver interface {
-	Detect(context.Context, string, *ftypes.Repository, []ftypes.Package) ([]types.DetectedVulnerability, error)
-	IsSupportedVersion(context.Context, ftypes.OSType, string) bool
+// Option configures a Detector. Options are provided for extensibility by users
+// of Trivy as a library and are not used within Trivy itself.
+type Option func(*resolver)
+
+// WithDriver registers a driver for the given OS family, overriding the default one.
+func WithDriver(family ftypes.OSType, drv driver.Driver) Option {
+	return func(r *resolver) {
+		r.drivers[family] = drv
+	}
+}
+
+// WithProvider registers an additional provider. It takes priority over the
+// built-in providers and the standard OS-specific drivers. When called multiple
+// times, the most recently registered provider is tried first.
+func WithProvider(provider driver.Provider) Option {
+	return func(r *resolver) {
+		r.providers = slices.Insert(r.providers, 0, provider)
+	}
+}
+
+// NewDetector creates a new Detector for the given scan target
+func NewDetector(target types.ScanTarget, opts ...Option) (*Detector, error) {
+	r := &resolver{
+		drivers:   maps.Clone(drivers),
+		providers: slices.Clone(providers),
+	}
+	for _, opt := range opts {
+		opt(r)
+	}
+
+	drv, err := r.resolve(target.OS.Family, target.Packages)
+	if err != nil {
+		return nil, err
+	}
+	return &Detector{
+		target: target,
+		driver: drv,
+	}, nil
 }
 
 // Detect detects the vulnerabilities
-func Detect(ctx context.Context, _, osFamily ftypes.OSType, osName string, repo *ftypes.Repository, _ time.Time, pkgs []ftypes.Package) ([]types.DetectedVulnerability, bool, error) {
-	ctx = log.WithContextPrefix(ctx, string(osFamily))
+func (d *Detector) Detect(ctx context.Context) ([]types.DetectedVulnerability, bool, error) {
+	ctx = log.WithContextPrefix(ctx, string(d.target.OS.Family))
 
-	driver, err := newDriver(osFamily)
-	if err != nil {
-		return nil, false, ErrUnsupportedOS
-	}
+	eosl := !d.driver.IsSupportedVersion(ctx, d.target.OS.Family, d.target.OS.Name)
 
-	eosl := !driver.IsSupportedVersion(ctx, osFamily, osName)
-
-	// Package `gpg-pubkey` doesn't use the correct version.
-	// We don't need to find vulnerabilities for this package.
-	filteredPkgs := lo.Filter(pkgs, func(pkg ftypes.Package, index int) bool {
-		return pkg.Name != "gpg-pubkey"
-	})
-	vulns, err := driver.Detect(ctx, osName, repo, filteredPkgs)
+	filteredPkgs := filterPkgs(ctx, d.target.Packages)
+	vulns, err := d.driver.Detect(ctx, d.target.OS.Name, d.target.Repository, filteredPkgs)
 	if err != nil {
 		return nil, false, xerrors.Errorf("failed detection: %w", err)
 	}
@@ -86,9 +137,38 @@ func Detect(ctx context.Context, _, osFamily ftypes.OSType, osName string, repo 
 	return vulns, eosl, nil
 }
 
-func newDriver(osFamily ftypes.OSType) (Driver, error) {
-	if driver, ok := drivers[osFamily]; ok {
-		return driver, nil
+// filterPkgs filters out packages that should not be scanned:
+//   - gpg-pubkey: doesn't use the correct version
+//   - Third-party packages: not covered by official OS security advisories
+func filterPkgs(ctx context.Context, pkgs []ftypes.Package) []ftypes.Package {
+	var skipped []string
+	filtered := lo.Filter(pkgs, func(pkg ftypes.Package, _ int) bool {
+		if pkg.Name == "gpg-pubkey" {
+			return false
+		}
+		if pkg.Repository.Class == ftypes.RepositoryClassThirdParty {
+			skipped = append(skipped, pkg.Name)
+			return false
+		}
+		return true
+	})
+	if len(skipped) > 0 {
+		log.DebugContext(ctx, "Skipping third-party packages", log.Any("packages", skipped))
+	}
+	return filtered
+}
+
+func (r *resolver) resolve(osFamily ftypes.OSType, pkgs []ftypes.Package) (driver.Driver, error) {
+	// Try providers first
+	for _, provider := range r.providers {
+		if d := provider(osFamily, pkgs); d != nil {
+			return d, nil
+		}
+	}
+
+	// Fall back to standard drivers
+	if d, ok := r.drivers[osFamily]; ok {
+		return d, nil
 	}
 
 	log.Warn("Unsupported os", log.String("family", string(osFamily)))

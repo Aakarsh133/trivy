@@ -1,7 +1,6 @@
 package result_test
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -11,7 +10,6 @@ import (
 
 	dbTypes "github.com/aquasecurity/trivy-db/pkg/types"
 	"github.com/aquasecurity/trivy/pkg/clock"
-	"github.com/aquasecurity/trivy/pkg/fanal/artifact"
 	ftypes "github.com/aquasecurity/trivy/pkg/fanal/types"
 	"github.com/aquasecurity/trivy/pkg/result"
 	"github.com/aquasecurity/trivy/pkg/types"
@@ -148,6 +146,15 @@ func TestFilter(t *testing.T) {
 			Severity: dbTypes.SeverityLow.String(),
 			Status:   types.MisconfStatusFailure,
 		}
+		misconf4 = types.DetectedMisconfiguration{
+			Type:     "Kubernetes Security Check",
+			ID:       "ID400",
+			Aliases:  []string{"AVD-ID400"},
+			Title:    "Bad Job",
+			Message:  "something bad",
+			Severity: dbTypes.SeverityLow.String(),
+			Status:   types.MisconfStatusFailure,
+		}
 		secret1 = types.DetectedSecret{
 			RuleID:    "generic-wanted-rule",
 			Severity:  dbTypes.SeverityHigh.String(),
@@ -175,14 +182,37 @@ func TestFilter(t *testing.T) {
 		license1 = types.DetectedLicense{
 			Name:       "GPL-3.0",
 			Severity:   dbTypes.SeverityLow.String(),
+			PkgName:    "foo",
 			FilePath:   "usr/share/gcc/python/libstdcxx/v6/__init__.py",
 			Category:   "restricted",
 			Confidence: 1,
 		}
 		license2 = types.DetectedLicense{
 			Name:       "GPL-3.0",
+			PkgName:    "bar",
 			Severity:   dbTypes.SeverityLow.String(),
 			FilePath:   "usr/share/gcc/python/libstdcxx/v6/printers.py",
+			Category:   "restricted",
+			Confidence: 1,
+		}
+		license3 = types.DetectedLicense{
+			Name:       "mit AND GPL-2.0-or-later",
+			Severity:   dbTypes.SeverityLow.String(),
+			FilePath:   "usr/share/gcc/python/libstdcxx/v6/__init__.py",
+			Category:   "restricted",
+			Confidence: 1,
+		}
+		license4 = types.DetectedLicense{
+			Name:       "Apache-2.0 WITH LLVM-exception",
+			Severity:   dbTypes.SeverityLow.String(),
+			FilePath:   "usr/share/llvm/LICENSE.txt",
+			Category:   "restricted",
+			Confidence: 1,
+		}
+		license5 = types.DetectedLicense{
+			Name:       "GPL-3.0 WITH GCC-exception-3.1",
+			Severity:   dbTypes.SeverityLow.String(),
+			FilePath:   "usr/share/gcc/LICENSE.txt",
 			Category:   "restricted",
 			Confidence: 1,
 		}
@@ -251,7 +281,7 @@ func TestFilter(t *testing.T) {
 			args: args{
 				report: types.Report{
 					ArtifactName: ".",
-					ArtifactType: artifact.TypeFilesystem,
+					ArtifactType: ftypes.TypeFilesystem,
 					Results: types.Results{
 						types.Result{
 							Target:   "gobinary",
@@ -276,7 +306,7 @@ func TestFilter(t *testing.T) {
 			},
 			want: types.Report{
 				ArtifactName: ".",
-				ArtifactType: artifact.TypeFilesystem,
+				ArtifactType: ftypes.TypeFilesystem,
 				Results: types.Results{
 					types.Result{
 						Target:   "gobinary",
@@ -350,7 +380,8 @@ func TestFilter(t *testing.T) {
 							Misconfigurations: []types.DetectedMisconfiguration{
 								misconf1,
 								misconf2,
-								misconf3,
+								misconf3, // ignored
+								misconf4, // ignored
 							},
 						},
 						{
@@ -358,6 +389,13 @@ func TestFilter(t *testing.T) {
 							Secrets: []types.DetectedSecret{
 								secret1,
 								secret2,
+							},
+						},
+						{
+							Target: "LICENSE.txt",
+							Licenses: []types.DetectedLicense{
+								license1, // ignored
+								license3,
 							},
 						},
 					},
@@ -415,6 +453,12 @@ func TestFilter(t *testing.T) {
 								Source:  "testdata/.trivyignore",
 								Finding: misconf3,
 							},
+							{
+								Type:    types.FindingTypeMisconfiguration,
+								Status:  types.FindingStatusIgnored,
+								Source:  "testdata/.trivyignore",
+								Finding: misconf4,
+							},
 						},
 					},
 					{
@@ -428,6 +472,20 @@ func TestFilter(t *testing.T) {
 								Status:  types.FindingStatusIgnored,
 								Source:  "testdata/.trivyignore",
 								Finding: secret2,
+							},
+						},
+					},
+					{
+						Target: "LICENSE.txt",
+						Licenses: []types.DetectedLicense{
+							license3,
+						},
+						ModifiedFindings: []types.ModifiedFinding{
+							{
+								Type:    types.FindingTypeLicense,
+								Status:  types.FindingStatusIgnored,
+								Source:  "testdata/.trivyignore",
+								Finding: license1,
 							},
 						},
 					},
@@ -457,6 +515,7 @@ func TestFilter(t *testing.T) {
 								misconf1, // ignored
 								misconf2, // ignored
 								misconf3,
+								misconf4, // ignored
 							},
 						},
 						{
@@ -472,6 +531,9 @@ func TestFilter(t *testing.T) {
 							Licenses: []types.DetectedLicense{
 								license1, // ignored
 								license2,
+								license3, // ignored by combination for 2 licenses
+								license4, // ignored by WITH operator
+								license5, // not ignored (different exception)
 							},
 						},
 					},
@@ -539,6 +601,12 @@ func TestFilter(t *testing.T) {
 								Source:  "testdata/.trivyignore.yaml",
 								Finding: misconf2,
 							},
+							{
+								Type:    types.FindingTypeMisconfiguration,
+								Status:  types.FindingStatusIgnored,
+								Source:  "testdata/.trivyignore.yaml",
+								Finding: misconf4,
+							},
 						},
 					},
 					{
@@ -565,6 +633,7 @@ func TestFilter(t *testing.T) {
 						Target: "LICENSE.txt",
 						Licenses: []types.DetectedLicense{
 							license2,
+							license5, // not ignored (different exception)
 						},
 						ModifiedFindings: []types.ModifiedFinding{
 							{
@@ -572,6 +641,19 @@ func TestFilter(t *testing.T) {
 								Status:  types.FindingStatusIgnored,
 								Source:  "testdata/.trivyignore.yaml",
 								Finding: license1,
+							},
+							{
+								Type:      types.FindingTypeLicense,
+								Status:    types.FindingStatusIgnored,
+								Source:    "testdata/.trivyignore.yaml",
+								Statement: "All license components are individually ignored",
+								Finding:   license3,
+							},
+							{
+								Type:    types.FindingTypeLicense,
+								Status:  types.FindingStatusIgnored,
+								Source:  "testdata/.trivyignore.yaml",
+								Finding: license4,
 							},
 						},
 					},
@@ -622,7 +704,7 @@ func TestFilter(t *testing.T) {
 						{
 							Misconfigurations: []types.DetectedMisconfiguration{
 								misconf1,
-								misconf2,
+								misconf2, // passed
 								misconf3, // ignored by check
 							},
 						},
@@ -998,11 +1080,168 @@ func TestFilter(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "ignore findings by type in policy file",
+			args: args{
+				report: types.Report{
+					Results: types.Results{
+						{
+							Target: "foo/package-lock.json",
+							Vulnerabilities: []types.DetectedVulnerability{
+								vuln1,
+								vuln7, // filtered by PkgName and Type
+							},
+						},
+						{
+							Target: "LICENSE.txt",
+							Licenses: []types.DetectedLicense{
+								license1, // filtered by PkgName and Type
+								license2,
+							},
+						},
+					},
+				},
+				policyFile: "testdata/ignore-by-type.rego",
+				severities: []dbTypes.Severity{
+					dbTypes.SeverityLow,
+				},
+			},
+			want: types.Report{
+				Results: types.Results{
+					{
+						Target: "foo/package-lock.json",
+						Vulnerabilities: []types.DetectedVulnerability{
+							vuln1,
+						},
+						ModifiedFindings: []types.ModifiedFinding{
+							{
+								Type:      types.FindingTypeVulnerability,
+								Status:    types.FindingStatusIgnored,
+								Source:    "testdata/ignore-by-type.rego",
+								Statement: "Filtered by Rego",
+								Finding:   vuln7,
+							},
+						},
+					},
+					{
+						Target: "LICENSE.txt",
+						Licenses: []types.DetectedLicense{
+							license2,
+						},
+						ModifiedFindings: []types.ModifiedFinding{
+							{
+								Type:      types.FindingTypeLicense,
+								Status:    types.FindingStatusIgnored,
+								Source:    "testdata/ignore-by-type.rego",
+								Statement: "Filtered by Rego",
+								Finding:   license1,
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "happy path with duplicates and different package IDs",
+			args: args{
+				report: types.Report{
+					Results: types.Results{
+						{
+							Vulnerabilities: []types.DetectedVulnerability{
+								{
+									VulnerabilityID:  "CVE-2019-0001",
+									PkgID:            "foo:1.2.3::abcdef1234567001",
+									PkgName:          "foo",
+									InstalledVersion: "1.2.3",
+									FixedVersion:     "1.2.4",
+									Vulnerability: dbTypes.Vulnerability{
+										Severity: dbTypes.SeverityCritical.String(),
+									},
+								},
+								{
+									VulnerabilityID:  "CVE-2019-0001",
+									PkgID:            "foo:1.2.3::abcdef1234567002",
+									PkgName:          "foo",
+									InstalledVersion: "1.2.3",
+									FixedVersion:     "1.2.4",
+									Vulnerability: dbTypes.Vulnerability{
+										Severity: dbTypes.SeverityCritical.String(),
+									},
+								},
+								{
+									VulnerabilityID:  "CVE-2019-0002",
+									PkgID:            "bar@1.2.3",
+									PkgName:          "bar",
+									InstalledVersion: "1.2.3",
+									FixedVersion:     "1.2.4",
+									Vulnerability: dbTypes.Vulnerability{
+										Severity: dbTypes.SeverityCritical.String(),
+									},
+								},
+								{
+									VulnerabilityID:  "CVE-2019-0002",
+									PkgID:            "bar@1.2.3",
+									PkgName:          "bar",
+									InstalledVersion: "1.2.3",
+									FixedVersion:     "1.2.4",
+									Vulnerability: dbTypes.Vulnerability{
+										Severity: dbTypes.SeverityCritical.String(),
+									},
+								},
+							},
+						},
+					},
+				},
+				severities: []dbTypes.Severity{
+					dbTypes.SeverityCritical,
+					dbTypes.SeverityHigh,
+					dbTypes.SeverityUnknown,
+				},
+			},
+			want: types.Report{
+				Results: types.Results{
+					{
+						Vulnerabilities: []types.DetectedVulnerability{
+							{
+								VulnerabilityID:  "CVE-2019-0002",
+								PkgID:            "bar@1.2.3",
+								PkgName:          "bar",
+								InstalledVersion: "1.2.3",
+								FixedVersion:     "1.2.4",
+								Vulnerability: dbTypes.Vulnerability{
+									Severity: dbTypes.SeverityCritical.String(),
+								},
+							},
+							{
+								VulnerabilityID:  "CVE-2019-0001",
+								PkgID:            "foo:1.2.3::abcdef1234567001",
+								PkgName:          "foo",
+								InstalledVersion: "1.2.3",
+								FixedVersion:     "1.2.4",
+								Vulnerability: dbTypes.Vulnerability{
+									Severity: dbTypes.SeverityCritical.String(),
+								},
+							},
+							{
+								VulnerabilityID:  "CVE-2019-0001",
+								PkgID:            "foo:1.2.3::abcdef1234567002",
+								PkgName:          "foo",
+								InstalledVersion: "1.2.3",
+								FixedVersion:     "1.2.4",
+								Vulnerability: dbTypes.Vulnerability{
+									Severity: dbTypes.SeverityCritical.String(),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fakeTime := time.Date(2020, 8, 10, 7, 28, 17, 958601, time.UTC)
-			ctx := clock.With(context.Background(), fakeTime)
+			ctx := clock.With(t.Context(), fakeTime)
 
 			var vexSources []vex.Source
 			if tt.args.vexPath != "" {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path"
-	"slices"
 	"strings"
 
 	"golang.org/x/xerrors"
@@ -60,8 +59,14 @@ func (a sbomAnalyzer) Analyze(ctx context.Context, input analyzer.AnalysisInput)
 
 	// FilePath for apps with aggregatingTypes is empty.
 	// Set the SBOM file path as Application.FilePath to correctly overwrite applications when merging layers.
+	// There are cases when FilePath for Application is empty:
+	// - FilePath for apps with aggregatingTypes is empty.
+	// - Third party SBOM without Application component.
+	// We need to use SBOM file path as Application.FilePath to correctly:
+	// - overwrite applications when merging layers. See https://github.com/aquasecurity/trivy/issues/7851
+	// - show FilePath as Target of Application. See https://github.com/aquasecurity/trivy/issues/8189.
 	for i, app := range bom.Applications {
-		if slices.Contains(ftypes.AggregatingTypes, app.Type) && app.FilePath == "" {
+		if app.FilePath == "" {
 			bom.Applications[i].FilePath = input.FilePath
 		}
 	}
@@ -73,6 +78,13 @@ func (a sbomAnalyzer) Analyze(ctx context.Context, input analyzer.AnalysisInput)
 }
 
 func (a sbomAnalyzer) Required(filePath string, _ os.FileInfo) bool {
+	// Exclude PEP 770 SBOMs in .dist-info/sboms/ directories.
+	// These are handled by the Python packaging analyzer instead.
+	// cf. https://peps.python.org/pep-0770/
+	if strings.Contains(filePath, ".dist-info/sboms/") {
+		return false
+	}
+
 	for _, suffix := range requiredSuffixes {
 		if strings.HasSuffix(filePath, suffix) {
 			return true

@@ -1,19 +1,21 @@
-package rego
+package rego_test
 
 import (
 	"testing"
+	"testing/fstest"
 
-	"github.com/open-policy-agent/opa/ast"
+	"github.com/open-policy-agent/opa/v1/ast"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	checks "github.com/aquasecurity/trivy-checks"
+	"github.com/aquasecurity/trivy/pkg/iac/rego"
 	"github.com/aquasecurity/trivy/pkg/iac/rules"
 	"github.com/aquasecurity/trivy/pkg/iac/scan"
 )
 
 func Test_EmbeddedLoading(t *testing.T) {
-	LoadAndRegister()
+	rego.LoadAndRegister()
 
 	frameworkRules := rules.GetRegistered()
 	var found bool
@@ -87,21 +89,19 @@ deny[res]{
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			policies, err := LoadPoliciesFromDirs(checks.EmbeddedLibraryFileSystem, ".")
+			policies, err := rego.LoadPoliciesFromDirs(checks.EmbeddedLibraryFileSystem, ".")
 			require.NoError(t, err)
-			newRule, err := ast.ParseModuleWithOpts("/rules/newrule.rego", tc.inputPolicy, ast.ParserOptions{
-				ProcessAnnotation: true,
-			})
+			newRule, err := rego.ParseRegoModule("/rules/newrule.rego", tc.inputPolicy)
 			require.NoError(t, err)
 
 			policies["/rules/newrule.rego"] = newRule
 			switch {
 			case tc.expectedError:
 				assert.Panics(t, func() {
-					RegisterRegoRules(policies)
+					rego.RegisterRegoRules(policies)
 				}, tc.name)
 			default:
-				RegisterRegoRules(policies)
+				rego.RegisterRegoRules(policies)
 			}
 		})
 	}
@@ -116,7 +116,7 @@ func Test_RegisterDeprecatedRule(t *testing.T) {
 	}{
 		{
 			name: "deprecated check",
-			id:   "AVD-DEP-0001",
+			id:   "DEP-0001",
 			inputPolicy: `# METADATA
 # title: "deprecated check"
 # description: "some description"
@@ -124,7 +124,7 @@ func Test_RegisterDeprecatedRule(t *testing.T) {
 # schemas:
 # - input: schema["dockerfile"]
 # custom:
-#   avd_id: AVD-DEP-0001
+#   id: DEP-0001
 #   input:
 #     selector:
 #     - type: dockerfile
@@ -139,7 +139,7 @@ deny[res]{
 		},
 		{
 			name: "not a deprecated check",
-			id:   "AVD-NOTDEP-0001",
+			id:   "NOTDEP-0001",
 			inputPolicy: `# METADATA
 # title: "not a deprecated check"
 # description: "some description"
@@ -147,7 +147,7 @@ deny[res]{
 # schemas:
 # - input: schema["dockerfile"]
 # custom:
-#   avd_id: AVD-NOTDEP-0001
+#   id: NOTDEP-0001
 #   input:
 #     selector:
 #     - type: dockerfile
@@ -161,7 +161,7 @@ deny[res]{
 		},
 		{
 			name: "invalid deprecation value",
-			id:   "AVD-BADDEP-0001",
+			id:   "BADDEP-0001",
 			inputPolicy: `# METADATA
 # title: "badly deprecated check"
 # description: "some description"
@@ -169,7 +169,7 @@ deny[res]{
 # schemas:
 # - input: schema["dockerfile"]
 # custom:
-#   avd_id: AVD-BADDEP-0001
+#   id: BADDEP-0001
 #   input:
 #     selector:
 #     - type: dockerfile
@@ -187,21 +187,33 @@ deny[res]{
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			policies := make(map[string]*ast.Module)
-			newRule, err := ast.ParseModuleWithOpts("/rules/newrule.rego", tc.inputPolicy, ast.ParserOptions{
-				ProcessAnnotation: true,
-			})
+			newRule, err := rego.ParseRegoModule("/rules/newrule.rego", tc.inputPolicy)
 			require.NoError(t, err)
 
 			policies["/rules/newrule.rego"] = newRule
 			assert.NotPanics(t, func() {
-				RegisterRegoRules(policies)
+				rego.RegisterRegoRules(policies)
 			})
 
 			for _, rule := range rules.GetRegistered() {
-				if rule.AVDID == tc.id {
+				if rule.ID == tc.id {
 					assert.Equal(t, tc.expected.Deprecated, rule.GetRule().Deprecated, tc.name)
 				}
 			}
 		})
 	}
+}
+
+func TestLoadPoliciesFromDirs(t *testing.T) {
+	fsys := fstest.MapFS{
+		"check.rego":       &fstest.MapFile{Data: []byte(`package user.foo`)},
+		".check.rego":      &fstest.MapFile{Data: []byte(`package user.foo`)},
+		"check_test.rego":  &fstest.MapFile{Data: []byte(`package user.foo_test`)},
+		"test.yaml":        &fstest.MapFile{Data: []byte(`foo: bar`)},
+		"checks/test.rego": &fstest.MapFile{Data: []byte(`package user.checks.foo`)},
+	}
+
+	modules, err := rego.LoadPoliciesFromDirs(fsys, ".")
+	require.NoError(t, err)
+	assert.Len(t, modules, 2)
 }

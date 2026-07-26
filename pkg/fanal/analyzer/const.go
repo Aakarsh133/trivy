@@ -1,10 +1,12 @@
 package analyzer
 
 import (
+	"github.com/aquasecurity/trivy/pkg/fanal/types"
 	"github.com/aquasecurity/trivy/pkg/iac/detection"
 )
 
-type Type string
+// Type is an alias for types.AnalyzerType for backward compatibility
+type Type = types.AnalyzerType
 
 const (
 	// ======
@@ -26,14 +28,16 @@ const (
 	TypeSUSE       Type = "suse"
 	TypeUbuntu     Type = "ubuntu"
 	TypeUbuntuESM  Type = "ubuntu-esm"
+	TypeCoreOS     Type = "coreos"
 
 	// OS Package
-	TypeApk         Type = "apk"
-	TypeDpkg        Type = "dpkg"
-	TypeDpkgLicense Type = "dpkg-license" // For analyzing licenses
-	TypeRpm         Type = "rpm"
-	TypeRpmArchive  Type = "rpm-archive"
-	TypeRpmqa       Type = "rpmqa"
+	TypeApk                   Type = "apk"
+	TypeBottlerocketInventory Type = "bottlerocket-inventory"
+	TypeDpkg                  Type = "dpkg"
+	TypeDpkgLicense           Type = "dpkg-license" // For analyzing licenses
+	TypeRpm                   Type = "rpm"
+	TypeRpmArchive            Type = "rpm-archive"
+	TypeRpmqa                 Type = "rpmqa"
 
 	// OS Package Repository
 	TypeApkRepo Type = "apk-repo"
@@ -65,6 +69,7 @@ const (
 	TypeNodePkg    Type = "node-pkg"
 	TypeYarn       Type = "yarn"
 	TypePnpm       Type = "pnpm"
+	TypeBun        Type = "bun"
 
 	// .NET
 	TypeNuget         Type = "nuget"
@@ -82,6 +87,7 @@ const (
 	TypePipenv       Type = "pipenv"
 	TypePoetry       Type = "poetry"
 	TypeUv           Type = "uv"
+	TypePyLock       Type = "pylock"
 
 	// Go
 	TypeGoBinary Type = "gobinary"
@@ -129,6 +135,7 @@ const (
 	TypeTerraformPlanSnapshot Type = Type(detection.FileTypeTerraformPlanSnapshot)
 	TypeYAML                  Type = Type(detection.FileTypeYAML)
 	TypeJSON                  Type = Type(detection.FileTypeJSON)
+	TypeAnsible               Type = Type(detection.FileTypeAnsible)
 
 	// ========
 	// License
@@ -154,6 +161,7 @@ var (
 		TypeAlpine,
 		TypeAmazon,
 		TypeCBLMariner,
+		TypeCoreOS,
 		TypeDebian,
 		TypePhoton,
 		TypeCentOS,
@@ -164,12 +172,15 @@ var (
 		TypeRedHatBase,
 		TypeSUSE,
 		TypeUbuntu,
+		TypeUbuntuESM,
 		TypeApk,
+		TypeBottlerocketInventory,
 		TypeDpkg,
 		TypeDpkgLicense,
 		TypeRpm,
 		TypeRpmqa,
 		TypeApkRepo,
+		TypeApkCommand,
 	}
 
 	// TypeLanguages has all language analyzers
@@ -178,6 +189,7 @@ var (
 		TypeGemSpec,
 		TypeCargo,
 		TypeComposer,
+		TypeComposerVendor,
 		TypeJar,
 		TypePom,
 		TypeGradleLock,
@@ -186,16 +198,19 @@ var (
 		TypeNodePkg,
 		TypeYarn,
 		TypePnpm,
+		TypeBun,
 		TypeNuget,
 		TypeDotNetCore,
 		TypePackagesProps,
 		TypeCondaPkg,
 		TypeCondaEnv,
 		TypePythonPkg,
+		TypePythonPkgEgg,
 		TypePip,
 		TypePipenv,
 		TypePoetry,
 		TypeUv,
+		TypePyLock,
 		TypeGoBinary,
 		TypeGoMod,
 		TypeRustBinary,
@@ -205,6 +220,7 @@ var (
 		TypePubSpecLock,
 		TypeMixLock,
 		TypeJulia,
+		TypeSBOM,
 	}
 
 	// TypeLockfiles has all lock file analyzers
@@ -213,10 +229,12 @@ var (
 		TypeNpmPkgLock,
 		TypeYarn,
 		TypePnpm,
+		TypeBun,
 		TypePip,
 		TypePipenv,
 		TypePoetry,
 		TypeUv,
+		TypePyLock,
 		TypeGoMod,
 		TypePom,
 		TypeConanLock,
@@ -254,5 +272,6 @@ var (
 		TypeTerraformPlanSnapshot,
 		TypeYAML,
 		TypeJSON,
+		TypeAnsible,
 	}
 )

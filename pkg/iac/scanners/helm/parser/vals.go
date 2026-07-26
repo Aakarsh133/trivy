@@ -3,13 +3,14 @@ package parser
 import (
 	"fmt"
 	"io"
+	"maps"
 	"net/url"
 	"os"
 	"strings"
 
 	"gopkg.in/yaml.v3"
-	"helm.sh/helm/v3/pkg/getter"
-	"helm.sh/helm/v3/pkg/strvals"
+	"helm.sh/helm/v4/pkg/getter"
+	"helm.sh/helm/v4/pkg/strvals"
 )
 
 type ValueOptions struct {
@@ -73,9 +74,7 @@ func (opts *ValueOptions) MergeValues() (map[string]any, error) {
 
 func mergeMaps(a, b map[string]any) map[string]any {
 	out := make(map[string]any, len(a))
-	for k, v := range a {
-		out[k] = v
-	}
+	maps.Copy(out, a)
 	for k, v := range b {
 		if v, ok := v.(map[string]any); ok {
 			if bv, ok := out[k]; ok {
@@ -108,7 +107,6 @@ func readFile(filePath string) ([]byte, error) {
 			return nil, err
 		}
 		return data.Bytes(), err
-	} else {
-		return os.ReadFile(filePath)
 	}
+	return os.ReadFile(filePath)
 }

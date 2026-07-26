@@ -23,7 +23,7 @@ func Test_adaptClusterSettings(t *testing.T) {
 			terraform: `
 			resource "aws_ecs_cluster" "example" {
 				name = "services-cluster"
-			  
+
 				setting {
 				  name  = "containerInsights"
 				  value = "enabled"
@@ -31,8 +31,23 @@ func Test_adaptClusterSettings(t *testing.T) {
 			}
 `,
 			expected: ecs.ClusterSettings{
-				Metadata:                 iacTypes.NewTestMetadata(),
-				ContainerInsightsEnabled: iacTypes.Bool(true, iacTypes.NewTestMetadata()),
+				ContainerInsightsEnabled: iacTypes.BoolTest(true),
+			},
+		},
+		{
+			name: "container insights enhanced",
+			terraform: `
+			resource "aws_ecs_cluster" "example" {
+				name = "services-cluster"
+
+				setting {
+				  name  = "containerInsights"
+				  value = "enhanced"
+				}
+			}
+`,
+			expected: ecs.ClusterSettings{
+				ContainerInsightsEnabled: iacTypes.BoolTest(true),
 			},
 		},
 		{
@@ -40,28 +55,22 @@ func Test_adaptClusterSettings(t *testing.T) {
 			terraform: `
 			resource "aws_ecs_cluster" "example" {
 				name = "services-cluster"
-			  
+
 				setting {
 				  name  = "invalidName"
 				  value = "enabled"
 				}
 			}
 `,
-			expected: ecs.ClusterSettings{
-				Metadata:                 iacTypes.NewTestMetadata(),
-				ContainerInsightsEnabled: iacTypes.Bool(false, iacTypes.NewTestMetadata()),
-			},
+			expected: ecs.ClusterSettings{},
 		},
 		{
 			name: "defaults",
 			terraform: `
-			resource "aws_ecs_cluster" "example" {			
+			resource "aws_ecs_cluster" "example" {
 			}
 `,
-			expected: ecs.ClusterSettings{
-				Metadata:                 iacTypes.NewTestMetadata(),
-				ContainerInsightsEnabled: iacTypes.Bool(false, iacTypes.NewTestMetadata()),
-			},
+			expected: ecs.ClusterSettings{},
 		},
 	}
 
@@ -99,10 +108,10 @@ func Test_adaptTaskDefinitionResource(t *testing.T) {
 	}
 ]
 				EOF
-			  
+
 				volume {
 				  name = "service-storage"
-			  
+
 				  efs_volume_configuration {
 					transit_encryption      = "ENABLED"
 				  }
@@ -110,25 +119,20 @@ func Test_adaptTaskDefinitionResource(t *testing.T) {
 			  }
 `,
 			expected: ecs.TaskDefinition{
-				Metadata: iacTypes.NewTestMetadata(),
 				Volumes: []ecs.Volume{
 					{
-						Metadata: iacTypes.NewTestMetadata(),
 						EFSVolumeConfiguration: ecs.EFSVolumeConfiguration{
-							Metadata:                 iacTypes.NewTestMetadata(),
-							TransitEncryptionEnabled: iacTypes.Bool(true, iacTypes.NewTestMetadata()),
+							TransitEncryptionEnabled: iacTypes.BoolTest(true),
 						},
 					},
 				},
 				ContainerDefinitions: []ecs.ContainerDefinition{
 					{
-						Metadata:   iacTypes.NewTestMetadata(),
-						Name:       iacTypes.String("my_service", iacTypes.NewTestMetadata()),
-						Image:      iacTypes.String("my_image", iacTypes.NewTestMetadata()),
-						CPU:        iacTypes.String("2", iacTypes.NewTestMetadata()),
-						Memory:     iacTypes.String("256", iacTypes.NewTestMetadata()),
-						Essential:  iacTypes.Bool(true, iacTypes.NewTestMetadata()),
-						Privileged: iacTypes.Bool(false, iacTypes.NewTestMetadata()),
+						Name:      iacTypes.StringTest("my_service"),
+						Image:     iacTypes.StringTest("my_image"),
+						CPU:       iacTypes.StringTest("2"),
+						Memory:    iacTypes.StringTest("256"),
+						Essential: iacTypes.BoolTest(true),
 						Environment: []ecs.EnvVar{
 							{
 								Name:  iacTypes.StringTest("ENVIRONMENT"),
@@ -145,25 +149,18 @@ func Test_adaptTaskDefinitionResource(t *testing.T) {
 			resource "aws_ecs_task_definition" "example" {
 				volume {
 					name = "service-storage"
-				
+
 					efs_volume_configuration {
 					}
 				  }
 			  }
 `,
 			expected: ecs.TaskDefinition{
-				Metadata: iacTypes.NewTestMetadata(),
 				Volumes: []ecs.Volume{
 					{
-						Metadata: iacTypes.NewTestMetadata(),
-						EFSVolumeConfiguration: ecs.EFSVolumeConfiguration{
-
-							Metadata:                 iacTypes.NewTestMetadata(),
-							TransitEncryptionEnabled: iacTypes.Bool(false, iacTypes.NewTestMetadata()),
-						},
+						EFSVolumeConfiguration: ecs.EFSVolumeConfiguration{},
 					},
 				},
-				ContainerDefinitions: nil,
 			},
 		},
 	}
@@ -181,7 +178,7 @@ func TestLines(t *testing.T) {
 	src := `
 	resource "aws_ecs_cluster" "example" {
 		name = "services-cluster"
-	  
+
 		setting {
 		  name  = "containerInsights"
 		  value = "enabled"
@@ -202,10 +199,10 @@ func TestLines(t *testing.T) {
 		}
 	]
 		EOF
-	  
+
 		volume {
 		  name = "service-storage"
-	  
+
 		  efs_volume_configuration {
 			transit_encryption      = "ENABLED"
 		  }

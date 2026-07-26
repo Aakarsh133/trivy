@@ -1,8 +1,8 @@
 package spdx_test
 
 import (
-	"context"
 	"hash/fnv"
+	"sort"
 	"testing"
 	"time"
 
@@ -16,7 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/aquasecurity/trivy/pkg/clock"
-	"github.com/aquasecurity/trivy/pkg/fanal/artifact"
 	ftypes "github.com/aquasecurity/trivy/pkg/fanal/types"
 	"github.com/aquasecurity/trivy/pkg/report"
 	"github.com/aquasecurity/trivy/pkg/sbom/core"
@@ -39,6 +38,27 @@ func annotation(t *testing.T, comment string) spdx.Annotation {
 	}
 }
 
+// bomWithoutRoot returns a BOM that has components but no root component,
+// e.g. an SPDX SBOM without a DESCRIBES relationship from SPDXRef-DOCUMENT.
+func bomWithoutRoot() *core.BOM {
+	bom := core.NewBOM(core.Options{})
+	bom.AddComponent(&core.Component{
+		Type:    core.TypeLibrary,
+		Name:    "jackson-databind",
+		Group:   "com.fasterxml.jackson.core",
+		Version: "2.13.4.1",
+		PkgIdentifier: ftypes.PkgIdentifier{
+			PURL: &packageurl.PackageURL{
+				Type:      packageurl.TypeMaven,
+				Namespace: "com.fasterxml.jackson.core",
+				Name:      "jackson-databind",
+				Version:   "2.13.4.1",
+			},
+		},
+	})
+	return bom
+}
+
 func TestMarshaler_Marshal(t *testing.T) {
 	testCases := []struct {
 		name        string
@@ -50,7 +70,7 @@ func TestMarshaler_Marshal(t *testing.T) {
 			inputReport: types.Report{
 				SchemaVersion: report.SchemaVersion,
 				ArtifactName:  "rails:latest",
-				ArtifactType:  artifact.TypeContainerImage,
+				ArtifactType:  ftypes.TypeContainerImage,
 				Metadata: types.Metadata{
 					Size: 1024,
 					OS: &ftypes.OS{
@@ -170,7 +190,7 @@ func TestMarshaler_Marshal(t *testing.T) {
 				DataLicense:       spdx.DataLicense,
 				SPDXIdentifier:    "DOCUMENT",
 				DocumentName:      "rails:latest",
-				DocumentNamespace: "http://aquasecurity.github.io/trivy/container_image/rails:latest-3ff14136-e09f-4df9-80ea-000000000009",
+				DocumentNamespace: "http://trivy.dev/container_image/rails:latest-3ff14136-e09f-4df9-80ea-000000000009",
 				CreationInfo: &spdx.CreationInfo{
 					Creators: []common.Creator{
 						{
@@ -190,6 +210,8 @@ func TestMarshaler_Marshal(t *testing.T) {
 						PackageDownloadLocation: "NONE",
 						PackageName:             "app/Gemfile.lock",
 						PrimaryPackagePurpose:   tspdx.PackagePurposeApplication,
+						PackageLicenseConcluded: "NOASSERTION",
+						PackageLicenseDeclared:  "NOASSERTION",
 						Annotations: []spdx.Annotation{
 							annotation(t, "Class: lang-pkgs"),
 							annotation(t, "Type: bundler"),
@@ -200,6 +222,8 @@ func TestMarshaler_Marshal(t *testing.T) {
 						PackageDownloadLocation: "NONE",
 						PackageName:             "app/subproject/Gemfile.lock",
 						PrimaryPackagePurpose:   tspdx.PackagePurposeApplication,
+						PackageLicenseConcluded: "NOASSERTION",
+						PackageLicenseDeclared:  "NOASSERTION",
 						Annotations: []spdx.Annotation{
 							annotation(t, "Class: lang-pkgs"),
 							annotation(t, "Type: bundler"),
@@ -213,7 +237,7 @@ func TestMarshaler_Marshal(t *testing.T) {
 							{
 								Category: tspdx.CategoryPackageManager,
 								RefType:  tspdx.RefTypePurl,
-								Locator:  "pkg:oci/rails@sha256%3Aa27fd8080b517143cbbbab9dfb7c8571c40d67d534bbdee55bd6c473f432b177?arch=arm64&repository_url=index.docker.io%2Flibrary%2Frails",
+								Locator:  "pkg:oci/rails@sha256:a27fd8080b517143cbbbab9dfb7c8571c40d67d534bbdee55bd6c473f432b177?arch=arm64&repository_url=index.docker.io%2Flibrary%2Frails",
 							},
 						},
 						Annotations: []spdx.Annotation{
@@ -225,7 +249,9 @@ func TestMarshaler_Marshal(t *testing.T) {
 							annotation(t, "SchemaVersion: 2"),
 							annotation(t, "Size: 1024"),
 						},
-						PrimaryPackagePurpose: tspdx.PackagePurposeContainer,
+						PrimaryPackagePurpose:   tspdx.PackagePurposeContainer,
+						PackageLicenseConcluded: "NOASSERTION",
+						PackageLicenseDeclared:  "NOASSERTION",
 					},
 					{
 						PackageSPDXIdentifier:   spdx.ElementID("Package-b8d4663e6d412e7"),
@@ -326,6 +352,8 @@ func TestMarshaler_Marshal(t *testing.T) {
 						PackageName:             "centos",
 						PackageVersion:          "8.3.2011",
 						PrimaryPackagePurpose:   tspdx.PackagePurposeOS,
+						PackageLicenseConcluded: "NOASSERTION",
+						PackageLicenseDeclared:  "NOASSERTION",
 						Annotations: []spdx.Annotation{
 							annotation(t, "Class: os-pkgs"),
 							annotation(t, "Type: centos"),
@@ -384,7 +412,7 @@ func TestMarshaler_Marshal(t *testing.T) {
 			inputReport: types.Report{
 				SchemaVersion: report.SchemaVersion,
 				ArtifactName:  "centos:latest",
-				ArtifactType:  artifact.TypeContainerImage,
+				ArtifactType:  ftypes.TypeContainerImage,
 				Metadata: types.Metadata{
 					Size: 1024,
 					OS: &ftypes.OS{
@@ -481,7 +509,7 @@ func TestMarshaler_Marshal(t *testing.T) {
 									DiffID: "sha256:ccb64cf0b7ba2e50741d0b64cae324eb5de3b1e2f580bbf177e721b67df38488",
 								},
 								FilePath: "tools/project-doe/specifications/actionpack.gemspec",
-								Digest:   "sha1:413f98442c83808042b5d1d2611a346b999bdca5",
+								Digest:   "sha512:bf690311ee7b95e713ba568322e3533f2dd1cb880b189e99d4edef13592b81764daec43e2c54c61d5c558dc5cfb35ecb85b65519e74026ff17675b6f8f916f4a", // Changed for tests
 							},
 						},
 					},
@@ -492,7 +520,7 @@ func TestMarshaler_Marshal(t *testing.T) {
 				DataLicense:       spdx.DataLicense,
 				SPDXIdentifier:    "DOCUMENT",
 				DocumentName:      "centos:latest",
-				DocumentNamespace: "http://aquasecurity.github.io/trivy/container_image/centos:latest-3ff14136-e09f-4df9-80ea-000000000006",
+				DocumentNamespace: "http://trivy.dev/container_image/centos:latest-3ff14136-e09f-4df9-80ea-000000000006",
 				CreationInfo: &spdx.CreationInfo{
 					Creators: []common.Creator{
 						{
@@ -517,7 +545,9 @@ func TestMarshaler_Marshal(t *testing.T) {
 							annotation(t, "SchemaVersion: 2"),
 							annotation(t, "Size: 1024"),
 						},
-						PrimaryPackagePurpose: tspdx.PackagePurposeContainer,
+						PrimaryPackagePurpose:   tspdx.PackagePurposeContainer,
+						PackageLicenseConcluded: "NOASSERTION",
+						PackageLicenseDeclared:  "NOASSERTION",
 					},
 					{
 						PackageSPDXIdentifier:   spdx.ElementID("Package-40c4059fe08523bf"),
@@ -568,7 +598,7 @@ func TestMarshaler_Marshal(t *testing.T) {
 						PackageSupplier:       &spdx.Supplier{Supplier: tspdx.PackageSupplierNoAssertion},
 						FilesAnalyzed:         true,
 						PackageVerificationCode: &spdx.PackageVerificationCode{
-							Value: "688d98e7e5660b879fd1fc548af8c0df3b7d785a",
+							Value: "da39a3ee5e6b4b0d3255bfef95601890afd80709",
 						},
 					},
 					{
@@ -602,6 +632,8 @@ func TestMarshaler_Marshal(t *testing.T) {
 						PackageName:             "centos",
 						PackageVersion:          "8.3.2011",
 						PrimaryPackagePurpose:   tspdx.PackagePurposeOS,
+						PackageLicenseConcluded: "NOASSERTION",
+						PackageLicenseDeclared:  "NOASSERTION",
 						Annotations: []spdx.Annotation{
 							annotation(t, "Class: os-pkgs"),
 							annotation(t, "Type: centos"),
@@ -614,8 +646,8 @@ func TestMarshaler_Marshal(t *testing.T) {
 						FileName:           "tools/project-doe/specifications/actionpack.gemspec",
 						Checksums: []spdx.Checksum{
 							{
-								Algorithm: spdx.SHA1,
-								Value:     "413f98442c83808042b5d1d2611a346b999bdca5",
+								Algorithm: spdx.SHA512,
+								Value:     "bf690311ee7b95e713ba568322e3533f2dd1cb880b189e99d4edef13592b81764daec43e2c54c61d5c558dc5cfb35ecb85b65519e74026ff17675b6f8f916f4a",
 							},
 						},
 					},
@@ -667,7 +699,6 @@ func TestMarshaler_Marshal(t *testing.T) {
 						Relationship: "CONTAINS",
 					},
 				},
-
 				OtherLicenses: nil,
 				Annotations:   nil,
 				Reviews:       nil,
@@ -678,7 +709,7 @@ func TestMarshaler_Marshal(t *testing.T) {
 			inputReport: types.Report{
 				SchemaVersion: report.SchemaVersion,
 				ArtifactName:  "masahiro331/CVE-2021-41098",
-				ArtifactType:  artifact.TypeFilesystem,
+				ArtifactType:  ftypes.TypeFilesystem,
 				Results: types.Results{
 					{
 						Target: "Gemfile.lock",
@@ -704,7 +735,7 @@ func TestMarshaler_Marshal(t *testing.T) {
 						Type:   ftypes.Pom,
 						Packages: []ftypes.Package{
 							{
-								ID:      "com.example:example:1.0.0",
+								ID:      "com.example:example:1.0.0::abcdef1234567001",
 								Name:    "com.example:example",
 								Version: "1.0.0",
 								Identifier: ftypes.PkgIdentifier{
@@ -725,7 +756,7 @@ func TestMarshaler_Marshal(t *testing.T) {
 				DataLicense:       spdx.DataLicense,
 				SPDXIdentifier:    "DOCUMENT",
 				DocumentName:      "masahiro331/CVE-2021-41098",
-				DocumentNamespace: "http://aquasecurity.github.io/trivy/filesystem/masahiro331/CVE-2021-41098-3ff14136-e09f-4df9-80ea-000000000006",
+				DocumentNamespace: "http://trivy.dev/filesystem/masahiro331/CVE-2021-41098-3ff14136-e09f-4df9-80ea-000000000006",
 				CreationInfo: &spdx.CreationInfo{
 					Creators: []common.Creator{
 						{
@@ -745,6 +776,8 @@ func TestMarshaler_Marshal(t *testing.T) {
 						PackageDownloadLocation: "NONE",
 						PackageName:             "Gemfile.lock",
 						PrimaryPackagePurpose:   tspdx.PackagePurposeApplication,
+						PackageLicenseConcluded: "NOASSERTION",
+						PackageLicenseDeclared:  "NOASSERTION",
 						Annotations: []spdx.Annotation{
 							annotation(t, "Class: lang-pkgs"),
 							annotation(t, "Type: bundler"),
@@ -755,6 +788,8 @@ func TestMarshaler_Marshal(t *testing.T) {
 						PackageDownloadLocation: "NONE",
 						PackageName:             "pom.xml",
 						PrimaryPackagePurpose:   tspdx.PackagePurposeApplication,
+						PackageLicenseConcluded: "NOASSERTION",
+						PackageLicenseDeclared:  "NOASSERTION",
 						Annotations: []spdx.Annotation{
 							annotation(t, "Class: lang-pkgs"),
 							annotation(t, "Type: pom"),
@@ -799,7 +834,7 @@ func TestMarshaler_Marshal(t *testing.T) {
 						PackageSupplier:       &spdx.Supplier{Supplier: tspdx.PackageSupplierNoAssertion},
 						PackageSourceInfo:     "package found in: pom.xml",
 						Annotations: []spdx.Annotation{
-							annotation(t, "PkgID: com.example:example:1.0.0"),
+							annotation(t, "PkgID: com.example:example:1.0.0::abcdef1234567001"),
 							annotation(t, "PkgType: pom"),
 						},
 					},
@@ -810,7 +845,9 @@ func TestMarshaler_Marshal(t *testing.T) {
 						Annotations: []spdx.Annotation{
 							annotation(t, "SchemaVersion: 2"),
 						},
-						PrimaryPackagePurpose: tspdx.PackagePurposeSource,
+						PrimaryPackagePurpose:   tspdx.PackagePurposeSource,
+						PackageLicenseConcluded: "NOASSERTION",
+						PackageLicenseDeclared:  "NOASSERTION",
 					},
 				},
 				Relationships: []*spdx.Relationship{
@@ -847,7 +884,7 @@ func TestMarshaler_Marshal(t *testing.T) {
 			inputReport: types.Report{
 				SchemaVersion: report.SchemaVersion,
 				ArtifactName:  "pom.xml",
-				ArtifactType:  artifact.TypeFilesystem,
+				ArtifactType:  ftypes.TypeFilesystem,
 				Results: types.Results{
 					{
 						Target: "pom.xml",
@@ -855,7 +892,7 @@ func TestMarshaler_Marshal(t *testing.T) {
 						Type:   ftypes.Pom,
 						Packages: []ftypes.Package{
 							{
-								ID:      "com.example:example:1.0.0",
+								ID:      "com.example:example:1.0.0::abcdef1234567001",
 								Name:    "com.example:example",
 								Version: "1.0.0",
 								Identifier: ftypes.PkgIdentifier{
@@ -884,7 +921,7 @@ func TestMarshaler_Marshal(t *testing.T) {
 				DataLicense:       spdx.DataLicense,
 				SPDXIdentifier:    "DOCUMENT",
 				DocumentName:      "pom.xml",
-				DocumentNamespace: "http://aquasecurity.github.io/trivy/filesystem/pom.xml-3ff14136-e09f-4df9-80ea-000000000004",
+				DocumentNamespace: "http://trivy.dev/filesystem/pom.xml-3ff14136-e09f-4df9-80ea-000000000004",
 				CreationInfo: &spdx.CreationInfo{
 					Creators: []common.Creator{
 						{
@@ -904,6 +941,8 @@ func TestMarshaler_Marshal(t *testing.T) {
 						PackageDownloadLocation: "NONE",
 						PackageName:             "pom.xml",
 						PrimaryPackagePurpose:   tspdx.PackagePurposeApplication,
+						PackageLicenseConcluded: "NOASSERTION",
+						PackageLicenseDeclared:  "NOASSERTION",
 						Annotations: []spdx.Annotation{
 							annotation(t, "Class: lang-pkgs"),
 							annotation(t, "Type: pom"),
@@ -927,7 +966,7 @@ func TestMarshaler_Marshal(t *testing.T) {
 						PackageSupplier:       &spdx.Supplier{Supplier: tspdx.PackageSupplierNoAssertion},
 						PackageSourceInfo:     "package found in: pom.xml",
 						Annotations: []spdx.Annotation{
-							annotation(t, "PkgID: com.example:example:1.0.0"),
+							annotation(t, "PkgID: com.example:example:1.0.0::abcdef1234567001"),
 							annotation(t, "PkgType: pom"),
 						},
 					},
@@ -938,7 +977,9 @@ func TestMarshaler_Marshal(t *testing.T) {
 						Annotations: []spdx.Annotation{
 							annotation(t, "SchemaVersion: 2"),
 						},
-						PrimaryPackagePurpose: tspdx.PackagePurposeSource,
+						PrimaryPackagePurpose:   tspdx.PackagePurposeSource,
+						PackageLicenseConcluded: "NOASSERTION",
+						PackageLicenseDeclared:  "NOASSERTION",
 					},
 				},
 				Relationships: []*spdx.Relationship{
@@ -989,7 +1030,7 @@ func TestMarshaler_Marshal(t *testing.T) {
 			inputReport: types.Report{
 				SchemaVersion: report.SchemaVersion,
 				ArtifactName:  "log4j-core-2.17.0.jar",
-				ArtifactType:  artifact.TypeFilesystem,
+				ArtifactType:  ftypes.TypeFilesystem,
 				Results: types.Results{
 					{
 						Target: "Java",
@@ -1026,7 +1067,7 @@ func TestMarshaler_Marshal(t *testing.T) {
 				DataLicense:       spdx.DataLicense,
 				SPDXIdentifier:    "DOCUMENT",
 				DocumentName:      "log4j-core-2.17.0.jar",
-				DocumentNamespace: "http://aquasecurity.github.io/trivy/filesystem/log4j-core-2.17.0.jar-3ff14136-e09f-4df9-80ea-000000000003",
+				DocumentNamespace: "http://trivy.dev/filesystem/log4j-core-2.17.0.jar-3ff14136-e09f-4df9-80ea-000000000003",
 				CreationInfo: &spdx.CreationInfo{
 					Creators: []common.Creator{
 						{
@@ -1073,7 +1114,9 @@ func TestMarshaler_Marshal(t *testing.T) {
 						Annotations: []spdx.Annotation{
 							annotation(t, "SchemaVersion: 2"),
 						},
-						PrimaryPackagePurpose: tspdx.PackagePurposeSource,
+						PrimaryPackagePurpose:   tspdx.PackagePurposeSource,
+						PackageLicenseConcluded: "NOASSERTION",
+						PackageLicenseDeclared:  "NOASSERTION",
 					},
 				},
 				Relationships: []*spdx.Relationship{
@@ -1095,7 +1138,7 @@ func TestMarshaler_Marshal(t *testing.T) {
 			inputReport: types.Report{
 				SchemaVersion: report.SchemaVersion,
 				ArtifactName:  "http://test-aggregate",
-				ArtifactType:  artifact.TypeRepository,
+				ArtifactType:  ftypes.TypeRepository,
 				Results: types.Results{
 					{
 						Target: "Node.js",
@@ -1128,7 +1171,7 @@ func TestMarshaler_Marshal(t *testing.T) {
 				DataLicense:       spdx.DataLicense,
 				SPDXIdentifier:    "DOCUMENT",
 				DocumentName:      "http://test-aggregate",
-				DocumentNamespace: "http://aquasecurity.github.io/trivy/repository/test-aggregate-3ff14136-e09f-4df9-80ea-000000000003",
+				DocumentNamespace: "http://trivy.dev/repository/test-aggregate-3ff14136-e09f-4df9-80ea-000000000003",
 				CreationInfo: &spdx.CreationInfo{
 					Creators: []common.Creator{
 						{
@@ -1175,7 +1218,9 @@ func TestMarshaler_Marshal(t *testing.T) {
 						Annotations: []spdx.Annotation{
 							annotation(t, "SchemaVersion: 2"),
 						},
-						PrimaryPackagePurpose: tspdx.PackagePurposeSource,
+						PrimaryPackagePurpose:   tspdx.PackagePurposeSource,
+						PackageLicenseConcluded: "NOASSERTION",
+						PackageLicenseDeclared:  "NOASSERTION",
 					},
 				},
 				Files: []*spdx.File{
@@ -1214,7 +1259,7 @@ func TestMarshaler_Marshal(t *testing.T) {
 			inputReport: types.Report{
 				SchemaVersion: report.SchemaVersion,
 				ArtifactName:  "empty/path",
-				ArtifactType:  artifact.TypeFilesystem,
+				ArtifactType:  ftypes.TypeFilesystem,
 				Results:       types.Results{},
 			},
 			wantSBOM: &spdx.Document{
@@ -1222,7 +1267,7 @@ func TestMarshaler_Marshal(t *testing.T) {
 				DataLicense:       spdx.DataLicense,
 				SPDXIdentifier:    "DOCUMENT",
 				DocumentName:      "empty/path",
-				DocumentNamespace: "http://aquasecurity.github.io/trivy/filesystem/empty/path-3ff14136-e09f-4df9-80ea-000000000002",
+				DocumentNamespace: "http://trivy.dev/filesystem/empty/path-3ff14136-e09f-4df9-80ea-000000000002",
 
 				CreationInfo: &spdx.CreationInfo{
 					Creators: []common.Creator{
@@ -1245,7 +1290,9 @@ func TestMarshaler_Marshal(t *testing.T) {
 						Annotations: []spdx.Annotation{
 							annotation(t, "SchemaVersion: 2"),
 						},
-						PrimaryPackagePurpose: tspdx.PackagePurposeSource,
+						PrimaryPackagePurpose:   tspdx.PackagePurposeSource,
+						PackageLicenseConcluded: "NOASSERTION",
+						PackageLicenseDeclared:  "NOASSERTION",
 					},
 				},
 				Relationships: []*spdx.Relationship{
@@ -1262,7 +1309,7 @@ func TestMarshaler_Marshal(t *testing.T) {
 			inputReport: types.Report{
 				SchemaVersion: report.SchemaVersion,
 				ArtifactName:  "secret",
-				ArtifactType:  artifact.TypeFilesystem,
+				ArtifactType:  ftypes.TypeFilesystem,
 				Results: types.Results{
 					{
 						Target: "key.pem",
@@ -1285,7 +1332,7 @@ func TestMarshaler_Marshal(t *testing.T) {
 				DataLicense:       spdx.DataLicense,
 				SPDXIdentifier:    "DOCUMENT",
 				DocumentName:      "secret",
-				DocumentNamespace: "http://aquasecurity.github.io/trivy/filesystem/secret-3ff14136-e09f-4df9-80ea-000000000002",
+				DocumentNamespace: "http://trivy.dev/filesystem/secret-3ff14136-e09f-4df9-80ea-000000000002",
 				CreationInfo: &spdx.CreationInfo{
 					Creators: []common.Creator{
 						{
@@ -1307,7 +1354,9 @@ func TestMarshaler_Marshal(t *testing.T) {
 						Annotations: []spdx.Annotation{
 							annotation(t, "SchemaVersion: 2"),
 						},
-						PrimaryPackagePurpose: tspdx.PackagePurposeSource,
+						PrimaryPackagePurpose:   tspdx.PackagePurposeSource,
+						PackageLicenseConcluded: "NOASSERTION",
+						PackageLicenseDeclared:  "NOASSERTION",
 					},
 				},
 				Relationships: []*spdx.Relationship{
@@ -1324,7 +1373,7 @@ func TestMarshaler_Marshal(t *testing.T) {
 			inputReport: types.Report{
 				SchemaVersion: report.SchemaVersion,
 				ArtifactName:  "go-artifact",
-				ArtifactType:  artifact.TypeFilesystem,
+				ArtifactType:  ftypes.TypeFilesystem,
 				Results: types.Results{
 					{
 						Target: "/usr/local/bin/test",
@@ -1357,7 +1406,7 @@ func TestMarshaler_Marshal(t *testing.T) {
 				DataLicense:       spdx.DataLicense,
 				SPDXIdentifier:    "DOCUMENT",
 				DocumentName:      "go-artifact",
-				DocumentNamespace: "http://aquasecurity.github.io/trivy/filesystem/go-artifact-3ff14136-e09f-4df9-80ea-000000000005",
+				DocumentNamespace: "http://trivy.dev/filesystem/go-artifact-3ff14136-e09f-4df9-80ea-000000000005",
 				CreationInfo: &spdx.CreationInfo{
 					Creators: []common.Creator{
 						{
@@ -1377,6 +1426,8 @@ func TestMarshaler_Marshal(t *testing.T) {
 						PackageDownloadLocation: "NONE",
 						PackageName:             "/usr/local/bin/test",
 						PrimaryPackagePurpose:   tspdx.PackagePurposeApplication,
+						PackageLicenseConcluded: "NOASSERTION",
+						PackageLicenseDeclared:  "NOASSERTION",
 						Annotations: []spdx.Annotation{
 							annotation(t, "Class: lang-pkgs"),
 							annotation(t, "Type: gobinary"),
@@ -1423,7 +1474,9 @@ func TestMarshaler_Marshal(t *testing.T) {
 						Annotations: []spdx.Annotation{
 							annotation(t, "SchemaVersion: 2"),
 						},
-						PrimaryPackagePurpose: tspdx.PackagePurposeSource,
+						PrimaryPackagePurpose:   tspdx.PackagePurposeSource,
+						PackageLicenseConcluded: "NOASSERTION",
+						PackageLicenseDeclared:  "NOASSERTION",
 					},
 				},
 				Relationships: []*spdx.Relationship{
@@ -1450,13 +1503,67 @@ func TestMarshaler_Marshal(t *testing.T) {
 				},
 			},
 		},
+		{
+			// Regression for https://github.com/aquasecurity/trivy/issues/10764:
+			// Marshal must not panic when the BOM has no root component (e.g. an SPDX
+			// SBOM without a DESCRIBES relationship from SPDXRef-DOCUMENT). Components
+			// must still be marshaled and no DESCRIBES relationship must be emitted.
+			name: "no root component",
+			inputReport: types.Report{
+				SchemaVersion: report.SchemaVersion,
+				ArtifactName:  "empty/path",
+				ArtifactType:  ftypes.TypeFilesystem,
+				BOM:           bomWithoutRoot(),
+			},
+			wantSBOM: &spdx.Document{
+				SPDXVersion:    spdx.Version,
+				DataLicense:    spdx.DataLicense,
+				SPDXIdentifier: tspdx.DocumentSPDXIdentifier,
+				// DocumentName and DocumentNamespace fall back to "unknown" when there is no root.
+				DocumentName:      "unknown",
+				DocumentNamespace: "http://trivy.dev/unknown/3ff14136-e09f-4df9-80ea-000000000001",
+				CreationInfo: &spdx.CreationInfo{
+					Creators: []common.Creator{
+						{
+							Creator:     "aquasecurity",
+							CreatorType: "Organization",
+						},
+						{
+							Creator:     "trivy-0.56.2",
+							CreatorType: "Tool",
+						},
+					},
+					Created: "2021-08-25T12:20:30Z",
+				},
+				// The component is still marshaled, but no root package and no DESCRIBES relationship are emitted.
+				Packages: []*spdx.Package{
+					{
+						PackageSPDXIdentifier:   spdx.ElementID("Package-a6073b1f888c9899"),
+						PackageDownloadLocation: "NONE",
+						PackageName:             "com.fasterxml.jackson.core:jackson-databind",
+						PackageVersion:          "2.13.4.1",
+						PackageLicenseConcluded: "NOASSERTION",
+						PackageLicenseDeclared:  "NOASSERTION",
+						PackageExternalReferences: []*spdx.PackageExternalReference{
+							{
+								Category: tspdx.CategoryPackageManager,
+								RefType:  tspdx.RefTypePurl,
+								Locator:  "pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.13.4.1",
+							},
+						},
+						PrimaryPackagePurpose: tspdx.PackagePurposeLibrary,
+						PackageSupplier:       &spdx.Supplier{Supplier: tspdx.PackageSupplierNoAssertion},
+					},
+				},
+			},
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Fake function calculating the hash value
 			h := fnv.New64()
-			hasher := func(v any, format hashstructure.Format, opts *hashstructure.HashOptions) (uint64, error) {
+			hasher := func(v any, _ hashstructure.Format, _ *hashstructure.HashOptions) (uint64, error) {
 				h.Reset()
 
 				var str string
@@ -1481,7 +1588,7 @@ func TestMarshaler_Marshal(t *testing.T) {
 				return h.Sum64(), nil
 			}
 
-			ctx := clock.With(context.Background(), time.Date(2021, 8, 25, 12, 20, 30, 5, time.UTC))
+			ctx := clock.With(t.Context(), time.Date(2021, 8, 25, 12, 20, 30, 5, time.UTC))
 			uuid.SetFakeUUID(t, "3ff14136-e09f-4df9-80ea-%012d")
 
 			marshaler := tspdx.NewMarshaler("0.56.2", tspdx.WithHasher(hasher))
@@ -1490,6 +1597,147 @@ func TestMarshaler_Marshal(t *testing.T) {
 
 			assert.NoError(t, spdxlib.ValidateDocument(spdxDoc))
 			assert.Equal(t, tc.wantSBOM, spdxDoc)
+		})
+	}
+}
+
+func TestMarshaler_normalizeLicenses(t *testing.T) {
+	tests := []struct {
+		name              string
+		input             []string
+		wantLicenseName   string
+		wantOtherLicenses []*spdx.OtherLicense
+	}{
+		{
+			name: "happy path",
+			input: []string{
+				"GPLv2+",
+			},
+			wantLicenseName: "GPL-2.0-or-later",
+		},
+		{
+			name: "happy path with multi license",
+			input: []string{
+				"GPLv2+",
+				"GPLv3+",
+				"BSD-4-Clause",
+			},
+			wantLicenseName: "GPL-2.0-or-later AND GPL-3.0-or-later AND BSD-4-Clause",
+		},
+		{
+			name: "happy path with OR operator",
+			input: []string{
+				"GPLv2+",
+				"LGPL 2.0 or GNU LESSER",
+			},
+			wantLicenseName: "GPL-2.0-or-later AND (LGPL-2.0-only OR LGPL-2.1-only)",
+		},
+		{
+			name: "happy path with OR operator with non-SPDX license",
+			input: []string{
+				"GPLv2+",
+				"wrong-license or unknown-license",
+			},
+			wantLicenseName: "GPL-2.0-or-later AND (LicenseRef-c581e42fe705aa48 OR LicenseRef-a0bb0951a6dfbdbe)",
+			wantOtherLicenses: []*spdx.OtherLicense{
+				{
+					LicenseIdentifier: "LicenseRef-a0bb0951a6dfbdbe",
+					LicenseName:       "unknown-license",
+					ExtractedText:     `This component is licensed under "unknown-license"`,
+				},
+				{
+					LicenseIdentifier: "LicenseRef-c581e42fe705aa48",
+					LicenseName:       "wrong-license",
+					ExtractedText:     `This component is licensed under "wrong-license"`,
+				},
+			},
+		},
+		{
+			name: "happy path with AND operator",
+			input: []string{
+				"GPLv2+",
+				"LGPL 2.0 and GNU LESSER",
+			},
+			wantLicenseName: "GPL-2.0-or-later AND LGPL-2.0-only AND LGPL-2.1-only",
+		},
+		{
+			name: "happy path with WITH operator",
+			input: []string{
+				"GPLv2",
+				"AFL 3.0 with wrong-exceptions",
+				"LGPL 2.0 and unknown-license and GNU LESSER",
+				"AFL 3.0 with Autoconf-exception-3.0",
+			},
+			wantLicenseName: "GPL-2.0-only AND LicenseRef-51373b28fab165e9 AND LGPL-2.0-only AND LicenseRef-a0bb0951a6dfbdbe AND LGPL-2.1-only AND AFL-3.0 WITH Autoconf-exception-3.0",
+			wantOtherLicenses: []*spdx.OtherLicense{
+				{
+					LicenseIdentifier: "LicenseRef-51373b28fab165e9",
+					LicenseName:       "AFL-3.0 WITH wrong-exceptions",
+					ExtractedText:     `This component is licensed under "AFL-3.0 WITH wrong-exceptions"`,
+				},
+				{
+					LicenseIdentifier: "LicenseRef-a0bb0951a6dfbdbe",
+					LicenseName:       "unknown-license",
+					ExtractedText:     `This component is licensed under "unknown-license"`,
+				},
+			},
+		},
+		{
+			name: "happy path with non-SPDX exception",
+			input: []string{
+				"AFL 2.0",
+				"AFL 3.0 with wrong-exceptions",
+			},
+			wantLicenseName: "AFL-2.0 AND LicenseRef-51373b28fab165e9",
+			wantOtherLicenses: []*spdx.OtherLicense{
+				{
+					LicenseIdentifier: "LicenseRef-51373b28fab165e9",
+					LicenseName:       "AFL-3.0 WITH wrong-exceptions",
+					ExtractedText:     `This component is licensed under "AFL-3.0 WITH wrong-exceptions"`,
+				},
+			},
+		},
+		{
+			name: "happy path with incorrect cases for license and exception",
+			input: []string{
+				"afl 3.0 with autoCONF-exception-3.0",
+			},
+			wantLicenseName: "AFL-3.0 WITH Autoconf-exception-3.0",
+		},
+		{
+			name: "happy path with text of license",
+			input: []string{
+				"text://Redistribution and use in source and binary forms, with or without",
+				"AFL 2.0",
+				"unknown-license",
+			},
+			wantLicenseName: "LicenseRef-b5b4cc09bc5f0e16 AND AFL-2.0 AND LicenseRef-a0bb0951a6dfbdbe",
+			wantOtherLicenses: []*spdx.OtherLicense{
+				{
+					LicenseIdentifier: "LicenseRef-a0bb0951a6dfbdbe",
+					LicenseName:       "unknown-license",
+					ExtractedText:     `This component is licensed under "unknown-license"`,
+				},
+				{
+					LicenseIdentifier: "LicenseRef-b5b4cc09bc5f0e16",
+					LicenseName:       "NOASSERTION",
+					ExtractedText:     "Redistribution and use in source and binary forms, with or without",
+					LicenseComment:    "The license text represents text found in package metadata and may not represent the full text of the license",
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := tspdx.NewMarshaler("")
+			gotLicenseName, gotOtherLicenses := m.NormalizeLicenses(tt.input)
+			// We will sort all OtherLicenses for SPDX document
+			// So we need to sort OtherLicenses for this test
+			sort.Slice(gotOtherLicenses, func(i, j int) bool {
+				return gotOtherLicenses[i].LicenseIdentifier < gotOtherLicenses[j].LicenseIdentifier
+			})
+			assert.Equal(t, tt.wantLicenseName, gotLicenseName)
+			assert.Equal(t, tt.wantOtherLicenses, gotOtherLicenses)
 		})
 	}
 }

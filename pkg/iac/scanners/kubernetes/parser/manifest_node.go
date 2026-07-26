@@ -2,13 +2,17 @@ package parser
 
 import (
 	"encoding/base64"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
+	"reflect"
 	"strconv"
 	"time"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/aquasecurity/trivy/pkg/log"
+	xjson "github.com/aquasecurity/trivy/pkg/x/json"
 )
 
 type TagType string
@@ -26,42 +30,37 @@ const (
 )
 
 type ManifestNode struct {
-	StartLine int
-	EndLine   int
-	Offset    int
-	Value     any
-	Type      TagType
-	Path      string
+	xjson.Location
+	Offset   int
+	Value    any
+	Type     TagType
+	FilePath string
 }
 
-func (r *ManifestNode) ToRego() any {
-	if r == nil {
+func (n *ManifestNode) ToRego() any {
+	if n == nil {
 		return nil
 	}
-	switch r.Type {
+	switch n.Type {
 	case TagBool, TagInt, TagFloat, TagString, TagStr, TagBinary:
-		return r.Value
+		return n.Value
 	case TagTimestamp:
-		t, ok := r.Value.(time.Time)
+		t, ok := n.Value.(time.Time)
 		if !ok {
 			return nil
 		}
 		return t.Format(time.RFC3339)
 	case TagSlice:
 		var output []any
-		for _, node := range r.Value.([]ManifestNode) {
+		for _, node := range n.Value.([]*ManifestNode) {
 			output = append(output, node.ToRego())
 		}
 		return output
 	case TagMap:
-		output := make(map[string]any)
-		output["__defsec_metadata"] = map[string]any{
-			"startline": r.StartLine,
-			"endline":   r.EndLine,
-			"filepath":  r.Path,
-			"offset":    r.Offset,
+		output := map[string]any{
+			"__defsec_metadata": n.metadata(),
 		}
-		for key, node := range r.Value.(map[string]ManifestNode) {
+		for key, node := range n.Value.(map[string]*ManifestNode) {
 			output[key] = node.ToRego()
 		}
 		return output
@@ -69,97 +68,179 @@ func (r *ManifestNode) ToRego() any {
 	return nil
 }
 
-func (r *ManifestNode) UnmarshalYAML(node *yaml.Node) error {
-	r.StartLine = node.Line
-	r.EndLine = node.Line
-	r.Type = TagType(node.Tag)
+func (n *ManifestNode) metadata() map[string]any {
+	return map[string]any{
+		"startline": n.StartLine,
+		"endline":   n.EndLine,
+		"filepath":  n.FilePath,
+		"offset":    n.Offset,
+	}
+}
+
+func (n *ManifestNode) UnmarshalYAML(node *yaml.Node) error {
+	n.StartLine = node.Line
+	n.EndLine = node.Line
+	n.Type = TagType(node.Tag)
 
 	switch TagType(node.Tag) {
 	case TagString, TagStr:
-		r.Value = node.Value
+		n.Value = node.Value
 	case TagInt:
 		val, err := strconv.Atoi(node.Value)
 		if err != nil {
 			return fmt.Errorf("failed to parse int: %w", err)
 		}
-		r.Value = val
+		n.Value = val
 	case TagFloat:
 		val, err := strconv.ParseFloat(node.Value, 64)
 		if err != nil {
 			return fmt.Errorf("failed to parse float: %w", err)
 		}
-		r.Value = val
+		n.Value = val
 	case TagBool:
 		val, err := strconv.ParseBool(node.Value)
 		if err != nil {
 			return fmt.Errorf("failed to parse bool: %w", err)
 		}
-		r.Value = val
+		n.Value = val
 	case TagTimestamp:
 		var val time.Time
 		if err := node.Decode(&val); err != nil {
 			return fmt.Errorf("failed to decode timestamp: %w", err)
 		}
-		r.Value = val
+		n.Value = val
 	case TagBinary:
 		val, err := base64.StdEncoding.DecodeString(node.Value)
 		if err != nil {
 			return fmt.Errorf("failed to decode binary data: %w", err)
 		}
-		r.Value = val
+		n.Value = val
 	case TagMap:
-		return r.handleMapTag(node)
+		return n.handleMapTag(node)
 	case TagSlice:
-		return r.handleSliceTag(node)
+		return n.handleSliceTag(node)
 	default:
 		log.WithPrefix("k8s").Debug("Skipping unsupported node tag",
 			log.String("tag", node.Tag),
-			log.FilePath(r.Path),
+			log.FilePath(n.FilePath),
 			log.Int("line", node.Line),
 		)
 	}
 	return nil
 }
 
-func (r *ManifestNode) handleSliceTag(node *yaml.Node) error {
-	var nodes []ManifestNode
+func (n *ManifestNode) handleSliceTag(node *yaml.Node) error {
+	nodes := make([]*ManifestNode, 0, len(node.Content))
 	maxLine := node.Line
 	for _, contentNode := range node.Content {
-		newNode := new(ManifestNode)
-		newNode.Path = r.Path
-		if err := contentNode.Decode(newNode); err != nil {
+		newNode, err := newManifestNodeFromYaml(n.FilePath, contentNode)
+		if err != nil {
 			return err
 		}
-		if newNode.EndLine > maxLine {
-			maxLine = newNode.EndLine
-		}
-		nodes = append(nodes, *newNode)
+		maxLine = max(maxLine, newNode.EndLine)
+		nodes = append(nodes, newNode)
 	}
-	r.EndLine = maxLine
-	r.Value = nodes
+	n.EndLine = maxLine
+	n.Value = nodes
 	return nil
 }
 
-func (r *ManifestNode) handleMapTag(node *yaml.Node) error {
-	output := make(map[string]ManifestNode)
-	var key string
+func (n *ManifestNode) handleMapTag(node *yaml.Node) error {
+	if len(node.Content)%2 != 0 {
+		return fmt.Errorf("invalid map node at line %d: uneven number of children", node.Line)
+	}
+
+	output := make(map[string]*ManifestNode, len(node.Content)/2)
 	maxLine := node.Line
-	for i, contentNode := range node.Content {
-		if i == 0 || i%2 == 0 {
-			key = contentNode.Value
-		} else {
-			newNode := new(ManifestNode)
-			newNode.Path = r.Path
-			if err := contentNode.Decode(newNode); err != nil {
-				return err
-			}
-			output[key] = *newNode
-			if newNode.EndLine > maxLine {
-				maxLine = newNode.EndLine
-			}
+	for i := 0; i < len(node.Content); i += 2 {
+		keyNode := node.Content[i]
+		valueNode := node.Content[i+1]
+
+		newNode, err := newManifestNodeFromYaml(n.FilePath, valueNode)
+		if err != nil {
+			return err
+		}
+
+		if newNode.Type == TagMap {
+			// Set StartLine to the key's line so that the map node snippet
+			// correctly starts at the key in the YAML file
+			newNode.StartLine = keyNode.Line
+		}
+		output[keyNode.Value] = newNode
+
+		maxLine = max(maxLine, newNode.EndLine)
+	}
+	n.EndLine = maxLine
+	n.Value = output
+	return nil
+}
+
+func newManifestNodeFromYaml(filePath string, yamlNode *yaml.Node) (*ManifestNode, error) {
+	newNode := &ManifestNode{
+		FilePath: filePath,
+	}
+
+	if yamlNode.Tag == "!!null" {
+		// UnmarshalYAML is not called for null nodes
+		newNode.StartLine = yamlNode.Line
+		newNode.EndLine = yamlNode.Line
+		return newNode, nil
+	}
+
+	if err := yamlNode.Decode(newNode); err != nil {
+		return nil, err
+	}
+
+	return newNode, nil
+}
+
+func (n *ManifestNode) UnmarshalJSONFrom(dec *jsontext.Decoder) error {
+	var valPtr any
+	var nodeType TagType
+	switch k := dec.PeekKind(); k {
+	case 't', 'f':
+		valPtr = new(bool)
+		nodeType = TagBool
+	case '"':
+		nodeType = TagStr
+		valPtr = new(string)
+	case '0':
+		nodeType = TagInt
+		valPtr = new(uint64)
+	case '[':
+		valPtr = new([]*ManifestNode)
+		nodeType = TagSlice
+	case '{':
+		valPtr = new(map[string]*ManifestNode)
+		nodeType = TagMap
+	case 'n':
+		// TODO: UnmarshalJSONFrom is called only for the root null
+		return dec.SkipValue()
+	case 0:
+		return dec.SkipValue()
+	default:
+		return fmt.Errorf("unexpected token kind %q at %d", k.String(), dec.InputOffset())
+	}
+
+	if err := json.UnmarshalDecode(dec, valPtr); err != nil {
+		return err
+	}
+
+	n.Value = reflect.ValueOf(valPtr).Elem().Interface()
+	n.Type = nodeType
+	return nil
+}
+
+func (n *ManifestNode) Walk(f func(n *ManifestNode)) {
+	f(n)
+	switch n.Type {
+	case TagSlice:
+		for _, node := range n.Value.([]*ManifestNode) {
+			node.Walk(f)
+		}
+	case TagMap:
+		for _, node := range n.Value.(map[string]*ManifestNode) {
+			node.Walk(f)
 		}
 	}
-	r.EndLine = maxLine
-	r.Value = output
-	return nil
 }

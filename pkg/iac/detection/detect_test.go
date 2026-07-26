@@ -2,15 +2,17 @@ package detection
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/xeipuuv/gojsonschema"
 )
 
 func Test_Detection(t *testing.T) {
@@ -52,6 +54,7 @@ func Test_Detection(t *testing.T) {
 			expected: []FileType{
 				FileTypeTerraform,
 				FileTypeJSON,
+				FileTypeAnsible,
 			},
 		},
 		{
@@ -69,6 +72,7 @@ func Test_Detection(t *testing.T) {
 			expected: []FileType{
 				FileTypeTerraform,
 				FileTypeJSON,
+				FileTypeAnsible,
 			},
 		},
 		{
@@ -87,11 +91,54 @@ func Test_Detection(t *testing.T) {
 			},
 		},
 		{
+			name: "tofu, no reader",
+			path: "main.tofu",
+			expected: []FileType{
+				FileTypeTerraform,
+			},
+		},
+		{
+			name: "tofu, with reader",
+			path: "main.tofu",
+			r:    strings.NewReader("some file content"),
+			expected: []FileType{
+				FileTypeTerraform,
+			},
+		},
+		{
+			name: "tofu json, no reader",
+			path: "main.tofu.json",
+			expected: []FileType{
+				FileTypeTerraform,
+				FileTypeJSON,
+				FileTypeAnsible,
+			},
+		},
+		{
+			name: "tofu json, with reader",
+			path: "main.tofu.json",
+			r: strings.NewReader(`
+{
+  "variable": {
+    "example": {
+      "default": "hello"
+    }
+  }
+}
+`),
+			expected: []FileType{
+				FileTypeTerraform,
+				FileTypeJSON,
+				FileTypeAnsible,
+			},
+		},
+		{
 			name: "cloudformation, no reader",
 			path: "main.yaml",
 			expected: []FileType{
 				FileTypeYAML,
 				FileTypeHelm,
+				FileTypeAnsible,
 			},
 		},
 		{
@@ -113,6 +160,7 @@ func Test_Detection(t *testing.T) {
 			expected: []FileType{
 				FileTypeTerraformPlanJSON,
 				FileTypeJSON,
+				FileTypeAnsible,
 			},
 		},
 		{
@@ -144,6 +192,7 @@ Resources:
 				FileTypeCloudFormation,
 				FileTypeYAML,
 				FileTypeHelm,
+				FileTypeAnsible,
 			},
 		},
 		{
@@ -154,6 +203,7 @@ Resources:
 }`),
 			expected: []FileType{
 				FileTypeJSON,
+				FileTypeAnsible,
 			},
 		},
 		{
@@ -162,6 +212,7 @@ Resources:
 			r:    nil,
 			expected: []FileType{
 				FileTypeDockerfile,
+				FileTypeAnsible,
 			},
 		},
 		{
@@ -170,6 +221,7 @@ Resources:
 			r:    nil,
 			expected: []FileType{
 				FileTypeDockerfile,
+				FileTypeAnsible,
 			},
 		},
 		{
@@ -178,6 +230,7 @@ Resources:
 			r:    strings.NewReader("FROM ubuntu\n"),
 			expected: []FileType{
 				FileTypeDockerfile,
+				FileTypeAnsible,
 			},
 		},
 		{
@@ -194,6 +247,8 @@ Resources:
 			r:    nil,
 			expected: []FileType{
 				FileTypeYAML,
+				FileTypeHelm,
+				FileTypeAnsible,
 			},
 		},
 		{
@@ -223,6 +278,8 @@ spec:
 			expected: []FileType{
 				FileTypeKubernetes,
 				FileTypeYAML,
+				FileTypeHelm,
+				FileTypeAnsible,
 			},
 		},
 		{
@@ -269,6 +326,7 @@ spec:
 			expected: []FileType{
 				FileTypeKubernetes,
 				FileTypeJSON,
+				FileTypeAnsible,
 			},
 		},
 		{
@@ -278,6 +336,7 @@ spec:
 			expected: []FileType{
 				FileTypeYAML,
 				FileTypeHelm,
+				FileTypeAnsible,
 			},
 		},
 		{
@@ -286,6 +345,8 @@ spec:
 			r:    nil,
 			expected: []FileType{
 				FileTypeYAML,
+				FileTypeHelm,
+				FileTypeAnsible,
 			},
 		},
 		{
@@ -294,6 +355,7 @@ spec:
 			r:    nil,
 			expected: []FileType{
 				FileTypeYAML,
+				FileTypeHelm,
 			},
 		},
 		{
@@ -310,6 +372,7 @@ spec:
 			r:    nil,
 			expected: []FileType{
 				FileTypeJSON,
+				FileTypeAnsible,
 			},
 		},
 		{
@@ -326,6 +389,8 @@ data:
 			expected: []FileType{
 				FileTypeKubernetes,
 				FileTypeYAML,
+				FileTypeHelm,
+				FileTypeAnsible,
 			},
 		},
 		{
@@ -354,6 +419,26 @@ rules:
 			expected: []FileType{
 				FileTypeKubernetes,
 				FileTypeYAML,
+				FileTypeHelm,
+				FileTypeAnsible,
+			},
+		},
+		{
+			name: "kubernetes, multi-doc with non-map doc first",
+			path: "k8s.yaml",
+			r: strings.NewReader(`---
+- this is a list, not a map
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: valid-service
+`),
+			expected: []FileType{
+				FileTypeKubernetes,
+				FileTypeYAML,
+				FileTypeHelm,
+				FileTypeAnsible,
 			},
 		},
 		{
@@ -383,6 +468,31 @@ rules:
 			expected: []FileType{
 				FileTypeJSON,
 				FileTypeAzureARM,
+				FileTypeAnsible,
+			},
+		},
+		{
+			name: "Azure ARM resources defined as an object",
+			path: "test.json",
+			r: strings.NewReader(`{
+  "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+  "languageVersion": "2.0",
+  "contentVersion": "1.0.0.0",
+  "resources": {
+    "myacc": {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2025-06-01",
+      "name": "my-acc-test",
+      "location": "location",
+			"kind": "Storage"
+    }
+  }
+}`),
+			expected: []FileType{
+				FileTypeJSON,
+				FileTypeCloudFormation,
+				FileTypeAzureARM,
+				FileTypeAnsible,
 			},
 		},
 		{
@@ -404,6 +514,7 @@ rules:
 			expected: []FileType{
 				FileTypeJSON,
 				FileTypeAzureARM,
+				FileTypeAnsible,
 			},
 		},
 		{
@@ -418,7 +529,57 @@ rules:
 `),
 			expected: []FileType{
 				FileTypeJSON,
+				FileTypeAnsible,
 			},
+		},
+		{
+			name: "CreateUiDefinition",
+			path: "CreateUiDefinition.json",
+			r: strings.NewReader(`{
+  "$schema": "https://schema.management.azure.com/schemas/0.1.2-preview/CreateUIDefinition.MultiVm.json#",
+  "handler": "Microsoft.Azure.CreateUIDef",
+  "version": "0.1.2-preview",
+  "parameters": {
+    "config": {
+      "isWizard": false,
+      "basics": {}
+    },
+    "basics": [],
+    "steps": [],
+    "outputs": {},
+    "resourceTypes": []
+  }
+}`),
+			expected: []FileType{
+				FileTypeJSON,
+				FileTypeAnsible,
+			},
+		},
+		{
+			name: "without extension",
+			path: "something",
+			expected: []FileType{
+				FileTypeAnsible,
+			},
+		},
+		{
+			name: "Ansible inventory INI file",
+			path: "something.ini",
+			expected: []FileType{
+				FileTypeAnsible,
+			},
+		},
+		{
+			name: "Ansible config file",
+			path: "ansible.cfg",
+			expected: []FileType{
+				FileTypeAnsible,
+			},
+		},
+		{
+			name:     " not Ansible config file",
+			path:     "something.cfg",
+			expected: []FileType{},
 		},
 	}
 
@@ -426,16 +587,10 @@ rules:
 		t.Run(test.name, func(t *testing.T) {
 			t.Run("GetTypes", func(t *testing.T) {
 				actualDetections := GetTypes(test.path, test.r)
-				assert.Equal(t, len(test.expected), len(actualDetections))
+				assert.Len(t, actualDetections, len(test.expected))
 				for _, expected := range test.expected {
 					resetReader(test.r)
-					var found bool
-					for _, actual := range actualDetections {
-						if actual == expected {
-							found = true
-							break
-						}
-					}
+					found := slices.Contains(actualDetections, expected)
 					assert.True(t, found, "%s should be detected", expected)
 				}
 			})
@@ -458,8 +613,8 @@ func BenchmarkIsType_SmallFile(b *testing.B) {
 	require.NoError(b, err)
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = IsType(fmt.Sprintf("./testdata/%s", "small.file"), bytes.NewReader(data), FileTypeAzureARM)
 	}
 }
@@ -469,8 +624,8 @@ func BenchmarkIsType_BigFile(b *testing.B) {
 	require.NoError(b, err)
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = IsType(fmt.Sprintf("./testdata/%s", "big.file"), bytes.NewReader(data), FileTypeAzureARM)
 	}
 }
@@ -599,12 +754,14 @@ number: 2`,
 		},
 	}
 	for _, tt := range tests {
-		schemas := make(map[string]*gojsonschema.Schema)
+		schemas := make(map[string]*jsonschema.Resolved)
 		for i, content := range tt.args.schemas {
-			l := gojsonschema.NewStringLoader(content)
-			s, err := gojsonschema.NewSchema(l)
+			var s jsonschema.Schema
+			err := json.Unmarshal([]byte(content), &s)
 			require.NoError(t, err)
-			schemas[fmt.Sprintf("schema-%d.json", i)] = s
+			resolved, err := s.Resolve(nil)
+			require.NoError(t, err)
+			schemas[fmt.Sprintf("schema-%d.json", i)] = resolved
 		}
 		rs := strings.NewReader(tt.args.fileContent)
 		got := IsFileMatchesSchemas(schemas, tt.args.fileType, tt.args.fileName, rs)

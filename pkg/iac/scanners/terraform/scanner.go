@@ -17,24 +17,23 @@ import (
 	"github.com/aquasecurity/trivy/pkg/iac/scanners/terraform/executor"
 	"github.com/aquasecurity/trivy/pkg/iac/scanners/terraform/parser"
 	"github.com/aquasecurity/trivy/pkg/iac/terraform"
-	"github.com/aquasecurity/trivy/pkg/iac/types"
 	"github.com/aquasecurity/trivy/pkg/log"
 	"github.com/aquasecurity/trivy/pkg/set"
 )
 
 var _ scanners.FSScanner = (*Scanner)(nil)
 var _ options.ConfigurableScanner = (*Scanner)(nil)
+var _ options.RawConfigScanner = (*Scanner)(nil)
 var _ ConfigurableTerraformScanner = (*Scanner)(nil)
 
 type Scanner struct {
-	mu           sync.Mutex
+	*rego.RegoScannerProvider
 	logger       *log.Logger
 	options      []options.ScannerOption
 	parserOpt    []parser.Option
 	executorOpt  []executor.Option
 	dirs         set.Set[string]
 	forceAllDirs bool
-	regoScanner  *rego.Scanner
 	execLock     sync.RWMutex
 }
 
@@ -44,6 +43,10 @@ func (s *Scanner) Name() string {
 
 func (s *Scanner) SetForceAllDirs(b bool) {
 	s.forceAllDirs = b
+}
+
+func (s *Scanner) SetScanRawConfig(b bool) {
+	s.AddExecutorOptions(executor.OptionWithScanRawConfig(b))
 }
 
 func (s *Scanner) AddParserOptions(opts ...parser.Option) {
@@ -56,28 +59,15 @@ func (s *Scanner) AddExecutorOptions(opts ...executor.Option) {
 
 func New(opts ...options.ScannerOption) *Scanner {
 	s := &Scanner{
-		dirs:    set.New[string](),
-		options: opts,
-		logger:  log.WithPrefix("terraform scanner"),
+		RegoScannerProvider: rego.NewRegoScannerProvider(opts...),
+		dirs:                set.New[string](),
+		options:             opts,
+		logger:              log.WithPrefix("terraform scanner"),
 	}
 	for _, opt := range opts {
 		opt(s)
 	}
 	return s
-}
-
-func (s *Scanner) initRegoScanner(srcFS fs.FS) (*rego.Scanner, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.regoScanner != nil {
-		return s.regoScanner, nil
-	}
-	regoScanner := rego.NewScanner(types.SourceCloud, s.options...)
-	if err := regoScanner.LoadPolicies(srcFS); err != nil {
-		return nil, err
-	}
-	s.regoScanner = regoScanner
-	return regoScanner, nil
 }
 
 // terraformRootModule represents the module to be used as the root module for Terraform deployment.
@@ -100,13 +90,13 @@ func (s *Scanner) ScanFS(ctx context.Context, target fs.FS, dir string) (scan.Re
 		return nil, nil
 	}
 
-	regoScanner, err := s.initRegoScanner(target)
+	rs, err := s.InitRegoScanner(target, s.options)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("init rego scanner: %w", err)
 	}
 
 	s.execLock.Lock()
-	s.executorOpt = append(s.executorOpt, executor.OptionWithRegoScanner(regoScanner))
+	s.executorOpt = append(s.executorOpt, executor.OptionWithRegoScanner(rs))
 	s.execLock.Unlock()
 
 	var allResults scan.Results
@@ -130,7 +120,7 @@ func (s *Scanner) ScanFS(ctx context.Context, target fs.FS, dir string) (scan.Re
 			return nil, err
 		}
 
-		modules, _, err := p.EvaluateAll(ctx)
+		modules, err := p.EvaluateAll(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -235,9 +225,13 @@ func (s *Scanner) isRootModule(target fs.FS, dir string) bool {
 		s.logger.Error("Failed to read dir", log.FilePath(dir), log.Err(err))
 		return false
 	}
+	suffixes := []string{".tf", ".tf.json", ".tofu", ".tofu.json"}
+
 	for _, file := range files {
-		if strings.HasSuffix(file.Name(), ".tf") || strings.HasSuffix(file.Name(), ".tf.json") {
-			return true
+		for _, suf := range suffixes {
+			if strings.HasSuffix(file.Name(), suf) {
+				return true
+			}
 		}
 	}
 	return false

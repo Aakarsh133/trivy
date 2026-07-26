@@ -126,8 +126,8 @@ func (a alpineCmdAnalyzer) fetchApkIndexArchive(targetOS types.OS) (*apkIndex, e
 func (a alpineCmdAnalyzer) parseConfig(apkIndexArchive *apkIndex, config *v1.ConfigFile) (packages []types.Package) {
 	envs := make(map[string]string)
 	for _, env := range config.Config.Env {
-		index := strings.Index(env, "=")
-		envs["$"+env[:index]] = env[index+1:]
+		before, after, _ := strings.Cut(env, "=")
+		envs["$"+before] = after
 	}
 
 	uniqPkgs := make(map[string]types.Package)
@@ -151,8 +151,8 @@ func (a alpineCmdAnalyzer) parseCommand(command string, envs map[string]string) 
 
 	command = strings.TrimPrefix(command, "/bin/sh -c")
 	var commands []string
-	for _, cmd := range strings.Split(command, "&&") {
-		for _, c := range strings.Split(cmd, ";") {
+	for cmd := range strings.SplitSeq(command, "&&") {
+		for c := range strings.SplitSeq(cmd, ";") {
 			commands = append(commands, strings.TrimSpace(c))
 		}
 	}
@@ -162,7 +162,7 @@ func (a alpineCmdAnalyzer) parseCommand(command string, envs map[string]string) 
 		}
 
 		var add bool
-		for _, field := range strings.Fields(cmd) {
+		for field := range strings.FieldsSeq(cmd) {
 			switch {
 			case strings.HasPrefix(field, "-") || strings.HasPrefix(field, "."):
 				continue

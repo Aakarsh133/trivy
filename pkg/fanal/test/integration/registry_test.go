@@ -1,35 +1,32 @@
 //go:build integration
-// +build integration
 
 package integration
 
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"net/url"
-	"os"
 	"path/filepath"
 	"testing"
 
-	dockercontainer "github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
-	"github.com/docker/go-connections/nat"
+	"github.com/moby/moby/api/types/container"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	testcontainers "github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/aquasecurity/trivy/internal/testutil"
 	"github.com/aquasecurity/trivy/pkg/cache"
 	"github.com/aquasecurity/trivy/pkg/fanal/analyzer"
-	_ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/all"
 	"github.com/aquasecurity/trivy/pkg/fanal/applier"
 	"github.com/aquasecurity/trivy/pkg/fanal/artifact"
 	aimage "github.com/aquasecurity/trivy/pkg/fanal/artifact/image"
 	"github.com/aquasecurity/trivy/pkg/fanal/image"
 	testdocker "github.com/aquasecurity/trivy/pkg/fanal/test/integration/docker"
 	"github.com/aquasecurity/trivy/pkg/fanal/types"
+	xhttp "github.com/aquasecurity/trivy/pkg/x/http"
+
+	_ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/all"
 )
 
 const (
@@ -40,7 +37,7 @@ const (
 )
 
 func TestTLSRegistry(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	baseDir, err := filepath.Abs(".")
 	require.NoError(t, err)
@@ -62,7 +59,7 @@ func TestTLSRegistry(t *testing.T) {
 			testcontainers.BindMount(filepath.Join(baseDir, "data", "registry", "certs"), "/certs"),
 			testcontainers.BindMount(filepath.Join(baseDir, "data", "registry", "auth"), "/auth"),
 		),
-		HostConfigModifier: func(hostConfig *dockercontainer.HostConfig) {
+		HostConfigModifier: func(hostConfig *container.HostConfig) {
 			hostConfig.AutoRemove = true
 		},
 		WaitingFor: wait.ForLog("listening on [::]:5443"),
@@ -189,7 +186,7 @@ func TestTLSRegistry(t *testing.T) {
 
 			// 2. Analyze it
 			imageRef := fmt.Sprintf("%s/%s", registryURL.Host, tc.imageName)
-			imageDetail, err := analyze(ctx, imageRef, tc.option)
+			imageDetail, err := analyze(t, ctx, imageRef, tc.option)
 			require.Equal(t, tc.wantErr, err != nil, err)
 			if err != nil {
 				return
@@ -201,7 +198,7 @@ func TestTLSRegistry(t *testing.T) {
 	}
 }
 
-func getRegistryURL(ctx context.Context, registryC testcontainers.Container, exposedPort nat.Port) (*url.URL, error) {
+func getRegistryURL(ctx context.Context, registryC testcontainers.Container, exposedPort string) (*url.URL, error) {
 	ip, err := registryC.Host(ctx)
 	if err != nil {
 		return nil, err
@@ -216,23 +213,18 @@ func getRegistryURL(ctx context.Context, registryC testcontainers.Container, exp
 	return url.Parse(urlStr)
 }
 
-func analyze(ctx context.Context, imageRef string, opt types.ImageOptions) (*types.ArtifactDetail, error) {
-	d, err := ioutil.TempDir("", "TestRegistry-*")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(d)
+func analyze(t *testing.T, ctx context.Context, imageRef string, opt types.ImageOptions) (*types.ArtifactDetail, error) {
+	d := t.TempDir()
 
 	c, err := cache.NewFSCache(d)
 	if err != nil {
 		return nil, err
 	}
 
-	cli, err := client.NewClientWithOpts(client.FromEnv)
-	if err != nil {
-		return nil, err
-	}
-	cli.NegotiateAPIVersion(ctx)
+	// Configure custom transport with insecure option
+	ctx = xhttp.WithTransport(ctx, xhttp.NewTransport(xhttp.Options{
+		Insecure: opt.RegistryOptions.Insecure,
+	}))
 
 	img, cleanup, err := image.NewContainerImage(ctx, imageRef, opt)
 	if err != nil {
@@ -258,7 +250,7 @@ func analyze(ctx context.Context, imageRef string, opt types.ImageOptions) (*typ
 	}
 	defer ar.Clean(imageInfo)
 
-	imageDetail, err := ap.ApplyLayers(imageInfo.ID, imageInfo.BlobIDs)
+	imageDetail, err := ap.ApplyLayers(ctx, imageInfo.ID, imageInfo.BlobIDs)
 	if err != nil {
 		return nil, err
 	}

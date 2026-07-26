@@ -2,7 +2,6 @@ package npm
 
 import (
 	"context"
-	"errors"
 	"io"
 	"io/fs"
 	"os"
@@ -12,9 +11,9 @@ import (
 	"golang.org/x/xerrors"
 
 	"github.com/aquasecurity/trivy/pkg/dependency/parser/nodejs/npm"
-	"github.com/aquasecurity/trivy/pkg/dependency/parser/nodejs/packagejson"
 	"github.com/aquasecurity/trivy/pkg/fanal/analyzer"
 	"github.com/aquasecurity/trivy/pkg/fanal/analyzer/language"
+	"github.com/aquasecurity/trivy/pkg/fanal/analyzer/language/nodejs/license"
 	"github.com/aquasecurity/trivy/pkg/fanal/types"
 	"github.com/aquasecurity/trivy/pkg/log"
 	"github.com/aquasecurity/trivy/pkg/utils/fsutils"
@@ -31,45 +30,47 @@ const (
 )
 
 type npmLibraryAnalyzer struct {
-	logger        *log.Logger
-	lockParser    language.Parser
-	packageParser *packagejson.Parser
+	logger     *log.Logger
+	lockParser language.Parser
+	license    *license.License
 }
 
-func newNpmLibraryAnalyzer(_ analyzer.AnalyzerOptions) (analyzer.PostAnalyzer, error) {
+func newNpmLibraryAnalyzer(opt analyzer.AnalyzerOptions) (analyzer.PostAnalyzer, error) {
 	return &npmLibraryAnalyzer{
-		logger:        log.WithPrefix("npm"),
-		lockParser:    npm.NewParser(),
-		packageParser: packagejson.NewParser(),
+		logger:     log.WithPrefix("npm"),
+		lockParser: npm.NewParser(),
+		license:    license.NewLicense("npm", opt.LicenseScannerOption.ClassifierConfidenceLevel),
 	}, nil
 }
 
-func (a npmLibraryAnalyzer) PostAnalyze(_ context.Context, input analyzer.PostAnalysisInput) (*analyzer.AnalysisResult, error) {
+func (a npmLibraryAnalyzer) PostAnalyze(ctx context.Context, input analyzer.PostAnalysisInput) (*analyzer.AnalysisResult, error) {
 	// Parse package-lock.json
 	required := func(path string, _ fs.DirEntry) bool {
-		return filepath.Base(path) == types.NpmPkgLock
+		return filepath.Base(path) == types.NpmPkgLock || input.FilePatterns.Match(path)
 	}
 
 	var apps []types.Application
-	err := fsutils.WalkDir(input.FS, ".", required, func(filePath string, d fs.DirEntry, r io.Reader) error {
+	err := fsutils.WalkDir(input.FS, ".", required, func(filePath string, _ fs.DirEntry, _ io.Reader) error {
 		// Find all licenses from package.json files under node_modules dirs
-		licenses, err := a.findLicenses(input.FS, filePath)
+		licenses, err := a.license.Traverse(input.FS, path.Join(path.Dir(filePath), "node_modules"))
 		if err != nil {
 			a.logger.Error("Unable to collect licenses", log.Err(err))
 			licenses = make(map[string][]string)
 		}
 
-		app, err := a.parseNpmPkgLock(input.FS, filePath)
+		app, err := a.parseNpmPkgLock(ctx, input.FS, filePath)
 		if err != nil {
 			return xerrors.Errorf("parse error: %w", err)
 		} else if app == nil {
 			return nil
 		}
 
-		// Fill licenses
-		for i, lib := range app.Packages {
-			if ll, ok := licenses[lib.ID]; ok {
-				app.Packages[i].Licenses = ll
+		// Fill licenses from package.json only if not present in lock file
+		for i, pkg := range app.Packages {
+			if len(pkg.Licenses) == 0 {
+				if ll, ok := licenses[pkg.ID]; ok {
+					app.Packages[i].Licenses = ll
+				}
 			}
 		}
 
@@ -108,7 +109,7 @@ func (a npmLibraryAnalyzer) Version() int {
 	return version
 }
 
-func (a npmLibraryAnalyzer) parseNpmPkgLock(fsys fs.FS, filePath string) (*types.Application, error) {
+func (a npmLibraryAnalyzer) parseNpmPkgLock(ctx context.Context, fsys fs.FS, filePath string) (*types.Application, error) {
 	f, err := fsys.Open(filePath)
 	if err != nil {
 		return nil, xerrors.Errorf("file open error: %w", err)
@@ -121,38 +122,5 @@ func (a npmLibraryAnalyzer) parseNpmPkgLock(fsys fs.FS, filePath string) (*types
 	}
 
 	// parse package-lock.json file
-	return language.Parse(types.Npm, filePath, file, a.lockParser)
-}
-
-func (a npmLibraryAnalyzer) findLicenses(fsys fs.FS, lockPath string) (map[string][]string, error) {
-	dir := path.Dir(lockPath)
-	root := path.Join(dir, "node_modules")
-	if _, err := fs.Stat(fsys, root); errors.Is(err, fs.ErrNotExist) {
-		a.logger.Info(`To collect the license information of packages, "npm install" needs to be performed beforehand`,
-			log.String("dir", root))
-		return nil, nil
-	}
-
-	// Parse package.json
-	required := func(path string, _ fs.DirEntry) bool {
-		return filepath.Base(path) == types.NpmPkg
-	}
-
-	// Traverse node_modules dir and find licenses
-	// Note that fs.FS is always slashed regardless of the platform,
-	// and path.Join should be used rather than filepath.Join.
-	licenses := make(map[string][]string)
-	err := fsutils.WalkDir(fsys, root, required, func(filePath string, d fs.DirEntry, r io.Reader) error {
-		pkg, err := a.packageParser.Parse(r)
-		if err != nil {
-			return xerrors.Errorf("unable to parse %q: %w", filePath, err)
-		}
-
-		licenses[pkg.ID] = pkg.Licenses
-		return nil
-	})
-	if err != nil {
-		return nil, xerrors.Errorf("walk error: %w", err)
-	}
-	return licenses, nil
+	return language.Parse(ctx, types.Npm, filePath, file, a.lockParser)
 }

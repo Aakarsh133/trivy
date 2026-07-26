@@ -3,12 +3,11 @@ package scanner
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
 
-	ms "github.com/mitchellh/mapstructure"
+	ms "github.com/go-viper/mapstructure/v2"
 	"github.com/package-url/packageurl-go"
 	"github.com/samber/lo"
 	"golang.org/x/xerrors"
@@ -16,6 +15,7 @@ import (
 	"github.com/aquasecurity/go-version/pkg/version"
 	"github.com/aquasecurity/trivy-kubernetes/pkg/artifacts"
 	"github.com/aquasecurity/trivy-kubernetes/pkg/bom"
+	"github.com/aquasecurity/trivy/pkg/cache"
 	cmd "github.com/aquasecurity/trivy/pkg/commands/artifact"
 	"github.com/aquasecurity/trivy/pkg/digest"
 	ftypes "github.com/aquasecurity/trivy/pkg/fanal/types"
@@ -27,7 +27,7 @@ import (
 	"github.com/aquasecurity/trivy/pkg/purl"
 	"github.com/aquasecurity/trivy/pkg/sbom/core"
 	"github.com/aquasecurity/trivy/pkg/sbom/cyclonedx"
-	"github.com/aquasecurity/trivy/pkg/scanner/local"
+	"github.com/aquasecurity/trivy/pkg/scan/local"
 	"github.com/aquasecurity/trivy/pkg/types"
 )
 
@@ -120,8 +120,13 @@ func (s *Scanner) Scan(ctx context.Context, artifactsData []*artifacts.Artifact)
 			resources = append(resources, result...)
 			return nil
 		}
+		workers := s.opts.Parallel
+		if s.opts.CacheBackend == string(cache.TypeFS) {
+			// To avoid lock contention in bbolt, we limit the number of workers to 1 when using FS cache.
+			workers = 1
+		}
 
-		p := parallel.NewPipeline(s.opts.Parallel, !s.opts.Quiet, resourceArtifacts, onItem, onResult)
+		p := parallel.NewPipeline(workers, !s.opts.Quiet, resourceArtifacts, onItem, onResult)
 		if err := p.Do(ctx); err != nil {
 			return report.Report{}, err
 		}
@@ -174,10 +179,19 @@ func (s *Scanner) scanMisconfigs(ctx context.Context, k8sArtifacts []*artifacts.
 	}
 
 	s.opts.Target = dir
+	origCacheBackend := s.opts.CacheBackend
+	// Using an in-memory cache is safe since scanning k8s is not supported in client/server mode,
+	// and the cache created during file system scanning is removed after each scan.
+	s.opts.CacheBackend = string(cache.TypeMemory)
+
+	defer func() {
+		// remove config files
+		removeDir(dir)
+		// restore cache backend
+		s.opts.CacheBackend = origCacheBackend
+	}()
 
 	configReport, err := s.runner.ScanFilesystem(ctx, s.opts)
-	// remove config files after scanning
-	removeDir(dir)
 
 	if err != nil {
 		return nil, xerrors.Errorf("failed to scan filesystem: %w", err)
@@ -205,6 +219,7 @@ func (s *Scanner) scanMisconfigs(ctx context.Context, k8sArtifacts []*artifacts.
 
 	return resources, nil
 }
+
 func (s *Scanner) filter(ctx context.Context, r types.Report, artifact *artifacts.Artifact) (report.Resource, error) {
 	var err error
 	r, err = s.runner.Filter(ctx, s.opts, r)
@@ -225,15 +240,16 @@ const (
 
 func (s *Scanner) scanK8sVulns(ctx context.Context, artifactsData []*artifacts.Artifact) ([]report.Resource, error) {
 	var resources []report.Resource
-	var nodeName string
-	if nodeName = s.findNodeName(artifactsData); nodeName == "" {
-		return resources, nil
-	}
+
+	// Find the first node name to identify cluster type
+	nodeName := s.findNodeName(artifactsData)
 
 	k8sScanner := k8s.NewKubernetesScanner()
 	scanOptions := types.ScanOptions{
-		Scanners: s.opts.Scanners,
-		PkgTypes: s.opts.PkgTypes,
+		Scanners:            s.opts.Scanners,
+		PkgTypes:            s.opts.PkgTypes,
+		PkgRelationships:    s.opts.PackageOptions.PkgRelationships,
+		VulnSeveritySources: s.opts.VulnSeveritySources,
 	}
 	for _, artifact := range artifactsData {
 		switch artifact.Kind {
@@ -373,11 +389,8 @@ func (s *Scanner) clusterInfoToReportResources(allArtifact []*artifacts.Artifact
 	var rootComponent *core.Component
 	var coreComponents []*core.Component
 
-	// Find the first node name to identify AKS cluster
-	var nodeName string
-	if nodeName = s.findNodeName(allArtifact); nodeName == "" {
-		return nil, errors.New("failed to find node name")
-	}
+	// Find the first node name to identify cluster type
+	nodeName := s.findNodeName(allArtifact)
 
 	kbom := core.NewBOM(core.Options{
 		GenerateBOMRef: true,
@@ -573,8 +586,8 @@ func osNameVersion(name string) (string, string) {
 	var buffer bytes.Buffer
 	var v string
 	var err error
-	parts := strings.Split(name, " ")
-	for _, p := range parts {
+	parts := strings.SplitSeq(name, " ")
+	for p := range parts {
 		_, err = version.Parse(p)
 		if err != nil {
 			buffer.WriteString(p + " ")

@@ -3,7 +3,7 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "testdata/fixtures/repo/julia",
-  "documentNamespace": "http://aquasecurity.github.io/trivy/filesystem/testdata/fixtures/repo/julia-3ff14136-e09f-4df9-80ea-000000000006",
+  "documentNamespace": "http://trivy.dev/filesystem/testdata/fixtures/repo/julia-3ff14136-e09f-4df9-80ea-000000000007",
   "creationInfo": {
     "creators": [
       "Organization: aquasecurity",
@@ -14,9 +14,11 @@
   "packages": [
     {
       "name": "Manifest.toml",
-      "SPDXID": "SPDXRef-Application-18fc3597717a3e56",
+      "SPDXID": "SPDXRef-Application-c39d15beb6bdf085",
       "downloadLocation": "NONE",
       "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
       "primaryPackagePurpose": "APPLICATION",
       "annotations": [
         {
@@ -35,7 +37,7 @@
     },
     {
       "name": "A",
-      "SPDXID": "SPDXRef-Package-7784b00da0cb0cb0",
+      "SPDXID": "SPDXRef-Package-87b4e00fb433805d",
       "versionInfo": "1.9.0",
       "supplier": "NOASSERTION",
       "downloadLocation": "NONE",
@@ -68,7 +70,7 @@
     },
     {
       "name": "B",
-      "SPDXID": "SPDXRef-Package-960543ac5c5f7e10",
+      "SPDXID": "SPDXRef-Package-32e95bcb6c889958",
       "versionInfo": "1.9.0",
       "supplier": "NOASSERTION",
       "downloadLocation": "NONE",
@@ -101,7 +103,7 @@
     },
     {
       "name": "B",
-      "SPDXID": "SPDXRef-Package-a4705eb108e4f15c",
+      "SPDXID": "SPDXRef-Package-789679ef84876c8d",
       "versionInfo": "1.9.0",
       "supplier": "NOASSERTION",
       "downloadLocation": "NONE",
@@ -137,6 +139,8 @@
       "SPDXID": "SPDXRef-Filesystem-1be792dd0077c431",
       "downloadLocation": "NONE",
       "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
       "primaryPackagePurpose": "SOURCE",
       "annotations": [
         {
@@ -150,13 +154,13 @@
   ],
   "relationships": [
     {
-      "spdxElementId": "SPDXRef-Application-18fc3597717a3e56",
-      "relatedSpdxElement": "SPDXRef-Package-7784b00da0cb0cb0",
+      "spdxElementId": "SPDXRef-Application-c39d15beb6bdf085",
+      "relatedSpdxElement": "SPDXRef-Package-789679ef84876c8d",
       "relationshipType": "CONTAINS"
     },
     {
-      "spdxElementId": "SPDXRef-Application-18fc3597717a3e56",
-      "relatedSpdxElement": "SPDXRef-Package-a4705eb108e4f15c",
+      "spdxElementId": "SPDXRef-Application-c39d15beb6bdf085",
+      "relatedSpdxElement": "SPDXRef-Package-87b4e00fb433805d",
       "relationshipType": "CONTAINS"
     },
     {
@@ -166,12 +170,12 @@
     },
     {
       "spdxElementId": "SPDXRef-Filesystem-1be792dd0077c431",
-      "relatedSpdxElement": "SPDXRef-Application-18fc3597717a3e56",
+      "relatedSpdxElement": "SPDXRef-Application-c39d15beb6bdf085",
       "relationshipType": "CONTAINS"
     },
     {
-      "spdxElementId": "SPDXRef-Package-7784b00da0cb0cb0",
-      "relatedSpdxElement": "SPDXRef-Package-960543ac5c5f7e10",
+      "spdxElementId": "SPDXRef-Package-87b4e00fb433805d",
+      "relatedSpdxElement": "SPDXRef-Package-32e95bcb6c889958",
       "relationshipType": "DEPENDS_ON"
     }
   ]

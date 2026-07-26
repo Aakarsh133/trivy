@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/samber/lo"
+	bolt "go.etcd.io/bbolt"
 	"golang.org/x/xerrors"
 
 	"github.com/aquasecurity/trivy-db/pkg/db"
@@ -33,10 +35,15 @@ var (
 	DefaultGCRRepository = fmt.Sprintf("%s:%d", "mirror.gcr.io/aquasec/trivy-db", db.SchemaVersion)
 	defaultGCRRepository = lo.Must(name.NewTag(DefaultGCRRepository))
 
-	Init  = db.Init
 	Close = db.Close
 	Path  = db.Path
 )
+
+// Init initializes the vulnerability database with read-only mode
+func Init(dbDir string, opts ...db.Option) error {
+	opts = append(opts, db.WithBoltOptions(&bolt.Options{ReadOnly: true}))
+	return db.Init(dbDir, opts...)
+}
 
 type options struct {
 	artifact       *oci.Artifact
@@ -96,14 +103,37 @@ func NewClient(dbDir string, quiet bool, opts ...Option) *Client {
 
 // NeedsUpdate check is DB needs update
 func (c *Client) NeedsUpdate(ctx context.Context, cliVersion string, skip bool) (bool, error) {
+	var noRequiredFiles bool
+	if _, err := os.Stat(db.Path(c.dbDir)); errors.Is(err, os.ErrNotExist) {
+		log.DebugContext(ctx, "There is no db file")
+		noRequiredFiles = true
+	}
 	meta, err := c.metadata.Get()
 	if err != nil {
 		log.DebugContext(ctx, "There is no valid metadata file", log.Err(err))
+		noRequiredFiles = true
+
+		meta = metadata.Metadata{Version: db.SchemaVersion}
+	}
+
+	// We can't use the DB if either `trivy.db` or `metadata.json` is missing.
+	// In that case, we need to download the DB.
+	if noRequiredFiles {
 		if skip {
 			log.ErrorContext(ctx, "The first run cannot skip downloading DB")
-			return false, xerrors.New("--skip-update cannot be specified on the first run")
+			return false, xerrors.New("--skip-db-update cannot be specified on the first run")
 		}
-		meta = metadata.Metadata{Version: db.SchemaVersion}
+		return true, nil
+	}
+
+	// There are 3 cases when DownloadAt field is zero:
+	// - metadata file was not created yet. This is the first run of Trivy.
+	// - trivy-db was downloaded with `oras`. In this case user can use `--skip-db-update` (like for air-gapped) or re-download trivy-db.
+	// - trivy-db was corrupted while copying from tmp directory to cache directory. We should update this trivy-db.
+	// We can't detect these cases, so we will show warning for users who use oras + air-gapped.
+	if meta.DownloadedAt.IsZero() && !skip {
+		log.WarnContext(ctx, "Trivy DB may be corrupted and will be re-downloaded. If you manually downloaded DB - use the `--skip-db-update` flag to skip updating DB.")
+		return true, nil
 	}
 
 	if db.SchemaVersion < meta.Version {
@@ -113,10 +143,11 @@ func (c *Client) NeedsUpdate(ctx context.Context, cliVersion string, skip bool) 
 	}
 
 	if skip {
-		log.DebugContext(ctx, "Skipping DB update...")
 		if err = c.validate(meta); err != nil {
 			return false, xerrors.Errorf("validate error: %w", err)
 		}
+
+		log.DebugContext(ctx, "Skipping DB update...")
 		return false, nil
 	}
 
@@ -132,7 +163,7 @@ func (c *Client) NeedsUpdate(ctx context.Context, cliVersion string, skip bool) 
 func (c *Client) validate(meta metadata.Metadata) error {
 	if db.SchemaVersion != meta.Version {
 		log.Error("The local DB has an old schema version which is not supported by the current version of Trivy CLI. DB needs to be updated.")
-		return xerrors.Errorf("--skip-update cannot be specified with the old DB schema. Local DB: %d, Expected: %d",
+		return xerrors.Errorf("--skip-db-update cannot be specified with the old DB schema. Local DB: %d, Expected: %d",
 			meta.Version, db.SchemaVersion)
 	}
 	return nil
@@ -154,11 +185,6 @@ func (c *Client) isNewDB(ctx context.Context, meta metadata.Metadata) bool {
 
 // Download downloads the DB file
 func (c *Client) Download(ctx context.Context, dst string, opt types.RegistryOptions) error {
-	// Remove the metadata file under the cache directory before downloading DB
-	if err := c.metadata.Delete(); err != nil {
-		log.DebugContext(ctx, "No metadata file")
-	}
-
 	if err := c.downloadDB(ctx, opt, dst); err != nil {
 		return xerrors.Errorf("OCI artifact error: %w", err)
 	}

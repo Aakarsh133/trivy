@@ -1,7 +1,7 @@
 {
-  "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
+  "$schema": "http://cyclonedx.org/schema/bom-1.7.schema.json",
   "bomFormat": "CycloneDX",
-  "specVersion": "1.6",
+  "specVersion": "1.7",
   "serialNumber": "urn:uuid:3ff14136-e09f-4df9-80ea-000000000006",
   "version": 1,
   "metadata": {
@@ -10,6 +10,9 @@
       "components": [
         {
           "type": "application",
+          "manufacturer": {
+            "name": "Aqua Security Software Ltd."
+          },
           "group": "aquasecurity",
           "name": "trivy",
           "version": "dev"
@@ -54,7 +57,7 @@
       "properties": [
         {
           "name": "aquasecurity:trivy:PkgID",
-          "value": "com.example:log4shell:1.0-SNAPSHOT"
+          "value": "com.example:log4shell:1.0-SNAPSHOT::b21b31f8"
         },
         {
           "name": "aquasecurity:trivy:PkgType",
@@ -72,7 +75,7 @@
       "properties": [
         {
           "name": "aquasecurity:trivy:PkgID",
-          "value": "com.fasterxml.jackson.core:jackson-databind:2.9.1"
+          "value": "com.fasterxml.jackson.core:jackson-databind:2.9.1::6a9e9547"
         },
         {
           "name": "aquasecurity:trivy:PkgType",

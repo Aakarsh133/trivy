@@ -1,7 +1,6 @@
 package generic_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -15,13 +14,12 @@ import (
 )
 
 func TestJsonScanner(t *testing.T) {
-	fsys := testutil.CreateFS(t, map[string]string{
+	fsys := testutil.CreateFS(map[string]string{
 		"/code/data.json": `{ "x": { "y": 123, "z": ["a", "b", "c"]}}`,
 		"/rules/rule.rego": `package builtin.json.lol
 
 __rego_metadata__ := {
 	"id": "ABC123",
-	"avd_id": "AVD-AB-0123",
 	"title": "title",
 	"short_code": "short",
 	"severity": "CRITICAL",
@@ -50,14 +48,13 @@ deny[res] {
 
 	scanner := generic.NewJsonScanner(rego.WithPolicyDirs("rules"))
 
-	results, err := scanner.ScanFS(context.TODO(), fsys, "code")
+	results, err := scanner.ScanFS(t.Context(), fsys, "code")
 	require.NoError(t, err)
 
 	require.Len(t, results.GetFailed(), 1)
 
 	assert.Equal(t, scan.Rule{
-		AVDID:          "AVD-AB-0123",
-		Aliases:        []string{"ABC123"},
+		ID:             "ABC123",
 		ShortCode:      "short",
 		Summary:        "title",
 		Explanation:    "description",
@@ -77,7 +74,7 @@ deny[res] {
 }
 
 func TestYamlScanner(t *testing.T) {
-	fsys := testutil.CreateFS(t, map[string]string{
+	fsys := testutil.CreateFS(map[string]string{
 		"/code/data.yaml": `---
 x:
   y: 123
@@ -90,7 +87,6 @@ x:
 
 __rego_metadata__ := {
 	"id": "ABC123",
-	"avd_id": "AVD-AB-0123",
 	"title": "title",
 	"short_code": "short",
 	"severity": "CRITICAL",
@@ -119,14 +115,13 @@ deny[res] {
 
 	scanner := generic.NewYamlScanner(rego.WithPolicyDirs("rules"))
 
-	results, err := scanner.ScanFS(context.TODO(), fsys, "code")
+	results, err := scanner.ScanFS(t.Context(), fsys, "code")
 	require.NoError(t, err)
 
 	require.Len(t, results.GetFailed(), 1)
 
 	assert.Equal(t, scan.Rule{
-		AVDID:          "AVD-AB-0123",
-		Aliases:        []string{"ABC123"},
+		ID:             "ABC123",
 		ShortCode:      "short",
 		Summary:        "title",
 		Explanation:    "description",
@@ -148,7 +143,7 @@ deny[res] {
 }
 
 func TestTomlParser(t *testing.T) {
-	fsys := testutil.CreateFS(t, map[string]string{
+	fsys := testutil.CreateFS(map[string]string{
 		"/code/code.toml": `
 [x]
 y = 123
@@ -158,7 +153,6 @@ z = ["a", "b", "c"]
 
 __rego_metadata__ := {
 	"id": "ABC123",
-	"avd_id": "AVD-AB-0123",
 	"title": "title",
 	"short_code": "short",
 	"severity": "CRITICAL",
@@ -187,14 +181,13 @@ deny[res] {
 
 	scanner := generic.NewTomlScanner(rego.WithPolicyDirs("rules"))
 
-	results, err := scanner.ScanFS(context.TODO(), fsys, "code")
+	results, err := scanner.ScanFS(t.Context(), fsys, "code")
 	require.NoError(t, err)
 
 	require.Len(t, results.GetFailed(), 1)
 
 	assert.Equal(t, scan.Rule{
-		AVDID:          "AVD-AB-0123",
-		Aliases:        []string{"ABC123"},
+		ID:             "ABC123",
 		ShortCode:      "short",
 		Summary:        "title",
 		Explanation:    "description",

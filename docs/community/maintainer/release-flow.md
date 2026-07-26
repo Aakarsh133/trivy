@@ -12,6 +12,11 @@ For detailed behavior, please refer to [the GitHub Actions configuration][workfl
     Commits with prefixes like `chore` or `build` are not considered releasable, and no release PR is created.
     To include such commits in a release, you need to either include commits with `feat` or `fix` prefixes or perform a manual release as described [below](#manual-release-pr-creation).
 
+!!! tip
+    It's a good idea to check if there are any outstanding vulnerability updates created by dependabot waiting for your review.
+    They can be found in the "Security" tab of the repository.
+    If there are any, please review and merge them before creating a release. This will help to ensure that the release includes the latest security patches.
+
 ## Flow
 The release flow consists of the following main steps:
 
@@ -19,6 +24,7 @@ The release flow consists of the following main steps:
 1. Drafting the release notes in GitHub Discussions
 1. Merging the release PR
 1. Updating the release notes in GitHub Discussions
+1. Moving the discussion to the Announcements category
 1. Navigating to the release notes in GitHub Releases page
 
 ### Automatic Release PR Creation
@@ -55,8 +61,14 @@ Once the draft of the release notes is complete, merge the release PR.
 When the PR is merged, a tag is automatically created, and [GoReleaser][goreleaser] releases binaries, container images, etc.
 
 ### Updating the Release Notes
-If the release completes without errors, a page for the release notes is created in GitHub Discussions (e.g., https://github.com/aquasecurity/trivy/discussions/6622).
+If the release completes without errors, a page for the release notes is created in GitHub Discussions under the **Development** category (e.g., https://github.com/aquasecurity/trivy/discussions/6622).
 Copy the draft release notes, adjust the formatting, and finalize the release notes.
+
+### Publishing the Release Notes
+Once the release notes are finalized, change the discussion category from **Development** to **Announcements** manually via the GitHub UI.
+
+!!! note
+    GoReleaser creates the discussion under **Development** instead of **Announcements** because GitHub restricts posting to the **Announcements** category — only users with maintainer and admin roles can post there.
 
 ### Navigating to the Release Notes
 To navigate to the release highlights and summary in GitHub Discussions, place a link in the GitHub Releases page as below:
@@ -74,10 +86,25 @@ Replace URLs with appropriate ones.
 
 Example: https://github.com/aquasecurity/trivy/releases/tag/v0.52.0
 
+### Adding the Release Branch to Rulesets
+For major and minor releases (e.g., v0.52.0), a `release/vX.Y` branch is automatically created.
+The release maintainer must add this branch to the repository ruleset to enable merge queue protection, unless it has already been added in advance.
+Go to the repository settings → Rules → Rulesets → "release" and add `release/vX.Y` to the branch targeting pattern.
 
-The release is now complete.
+### Merging the auto-generated Helm chart update PR
+Once the release PR is merged, there will be an auto-generated PR that bumps the Trivy version for the Trivy Helm Chart. An example can be seen [here](https://github.com/aquasecurity/trivy/pull/8638).
+
+> [!NOTE]  
+> It is possible that the release action takes a while to finish and the Helm chart action runs prior. In such a case the Helm chart action will fail as it will not be able to find the latest Trivy container image.
+> In such a case, it is advised to manually restart the Helm chart action, once the release action is finished.
+
+If things look good, approve and merge this PR to further trigger the publishing of the Helm Chart.
+
+
+The release is now complete 🍻
+
 
 [conventional-commits]: https://www.conventionalcommits.org/en/v1.0.0/
-[release-please]: https://github.com/googleapis/release-please 
+[release-please]: https://github.com/googleapis/release-please
 [goreleaser]: https://goreleaser.com/
 [workflows]: https://github.com/aquasecurity/trivy/tree/main/.github/workflows

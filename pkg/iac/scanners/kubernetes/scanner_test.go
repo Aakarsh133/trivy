@@ -1,7 +1,6 @@
 package kubernetes_test
 
 import (
-	"context"
 	"io/fs"
 	"strings"
 	"testing"
@@ -34,7 +33,6 @@ spec:
 # title: test check
 # custom:
 #   id: KSV011
-#   avd_id: AVD-KSV-0011
 #   severity: LOW
 #   input:
 #     selector:
@@ -56,13 +54,13 @@ deny[res] {
 		rego.WithEmbeddedLibraries(true),
 	)
 
-	results, err := scanner.ScanFS(context.TODO(), fsys, "code")
+	results, err := scanner.ScanFS(t.Context(), fsys, "code")
 	require.NoError(t, err)
 
 	failed := results.GetFailed()
 	require.Len(t, failed, 1)
 
-	assert.Equal(t, "AVD-KSV-0011", failed[0].Rule().AVDID)
+	assert.Equal(t, "KSV011", failed[0].Rule().ID)
 	assertLines(t, file, failed)
 }
 
@@ -97,7 +95,6 @@ func Test_ScanJSON(t *testing.T) {
 # title: test check
 # custom:
 #   id: KSV011
-#   avd_id: AVD-KSV-0011
 #   severity: LOW
 #   input:
 #     selector:
@@ -119,7 +116,7 @@ deny[res] {
 		rego.WithEmbeddedLibraries(true),
 	)
 
-	results, err := scanner.ScanFS(context.TODO(), fsys, "code")
+	results, err := scanner.ScanFS(t.Context(), fsys, "code")
 	require.NoError(t, err)
 
 	require.Len(t, results.GetFailed(), 1)
@@ -127,14 +124,21 @@ deny[res] {
 	failed := results.GetFailed()
 	require.Len(t, failed, 1)
 
-	assert.Equal(t, "AVD-KSV-0011", failed[0].Rule().AVDID)
+	assert.Equal(t, "KSV011", failed[0].Rule().ID)
 	assertLines(t, file, failed)
 }
 
 func Test_YamlWithSeparator(t *testing.T) {
 
 	fsys := buildFS(map[string]string{
-		"check.rego": `package defsec
+		"check.rego": `# METADATA
+# title: Custom policy
+# description: Custom policy for testing
+# scope: package
+# schemas:
+#   - input: schema["input"]
+
+package defsec
 
 deny[res] {
   input.kind == "Pod"
@@ -160,7 +164,7 @@ spec:
 		rego.WithPolicyDirs("."),
 		rego.WithEmbeddedLibraries(true),
 	)
-	results, err := scanner.ScanFS(context.TODO(), fsys, ".")
+	results, err := scanner.ScanFS(t.Context(), fsys, ".")
 	require.NoError(t, err)
 
 	assert.NotEmpty(t, results.GetFailed())
@@ -205,7 +209,7 @@ deny[res] {
 		rego.WithEmbeddedLibraries(true),
 	)
 
-	results, err := scanner.ScanFS(context.TODO(), fsys, ".")
+	results, err := scanner.ScanFS(t.Context(), fsys, ".")
 	require.NoError(t, err)
 
 	assertLines(t, file, results)
@@ -220,7 +224,6 @@ func Test_CheckWithSubtype(t *testing.T) {
 # - input: schema["kubernetes"]
 # custom:
 #   id: KSV001
-#   avd_id: AVD-KSV-0001
 #   severity: MEDIUM
 #   input:
 #     selector:
@@ -242,7 +245,6 @@ deny[res] {
 # - input: schema["kubernetes"]
 # custom:
 #   id: KSV002
-#   avd_id: AVD-KSV-0002
 #   severity: LOW
 #   input:
 #     selector:
@@ -276,7 +278,7 @@ spec:
 		rego.WithPolicyDirs("checks"),
 		rego.WithPolicyFilesystem(fsys),
 	)
-	results, err := scanner.ScanFS(context.TODO(), fsys, "test/KSV001")
+	results, err := scanner.ScanFS(t.Context(), fsys, "test/KSV001")
 	require.NoError(t, err)
 
 	require.NoError(t, err)
@@ -284,7 +286,7 @@ spec:
 
 	failure := results.GetFailed()[0]
 
-	assert.Equal(t, "AVD-KSV-0001", failure.Rule().AVDID)
+	assert.Equal(t, "KSV001", failure.Rule().ID)
 }
 
 func assertLines(t *testing.T, content string, results scan.Results) {

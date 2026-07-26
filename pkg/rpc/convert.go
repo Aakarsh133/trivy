@@ -1,6 +1,8 @@
 package rpc
 
 import (
+	jsonv2 "encoding/json/v2"
+	"strings"
 	"time"
 
 	"github.com/package-url/packageurl-go"
@@ -13,6 +15,7 @@ import (
 	ftypes "github.com/aquasecurity/trivy/pkg/fanal/types"
 	"github.com/aquasecurity/trivy/pkg/log"
 	"github.com/aquasecurity/trivy/pkg/types"
+	xslices "github.com/aquasecurity/trivy/pkg/x/slices"
 	"github.com/aquasecurity/trivy/rpc/cache"
 	"github.com/aquasecurity/trivy/rpc/common"
 	"github.com/aquasecurity/trivy/rpc/scanner"
@@ -52,26 +55,28 @@ func ConvertToRPCPkgs(pkgs []ftypes.Package) []*common.Package {
 	var rpcPkgs []*common.Package
 	for _, pkg := range pkgs {
 		rpcPkgs = append(rpcPkgs, &common.Package{
-			Id:         pkg.ID,
-			Name:       pkg.Name,
-			Version:    pkg.Version,
-			Release:    pkg.Release,
-			Epoch:      int32(pkg.Epoch),
-			Arch:       pkg.Arch,
-			Identifier: ConvertToRPCPkgIdentifier(pkg.Identifier),
-			Dev:        pkg.Dev,
-			SrcName:    pkg.SrcName,
-			SrcVersion: pkg.SrcVersion,
-			SrcRelease: pkg.SrcRelease,
-			SrcEpoch:   int32(pkg.SrcEpoch),
-			Licenses:   pkg.Licenses,
-			Locations:  ConvertToRPCLocations(pkg.Locations),
-			Layer:      ConvertToRPCLayer(pkg.Layer),
-			FilePath:   pkg.FilePath,
-			DependsOn:  pkg.DependsOn,
-			Digest:     pkg.Digest.String(),
-			Indirect:   pkg.Indirect,
-			Maintainer: pkg.Maintainer,
+			Id:           pkg.ID,
+			Name:         pkg.Name,
+			Version:      pkg.Version,
+			Release:      pkg.Release,
+			Epoch:        int32(pkg.Epoch),
+			Arch:         pkg.Arch,
+			Identifier:   ConvertToRPCPkgIdentifier(pkg.Identifier),
+			Dev:          pkg.Dev,
+			SrcName:      pkg.SrcName,
+			SrcVersion:   pkg.SrcVersion,
+			SrcRelease:   pkg.SrcRelease,
+			SrcEpoch:     int32(pkg.SrcEpoch),
+			Licenses:     pkg.Licenses,
+			Locations:    ConvertToRPCLocations(pkg.Locations),
+			Layer:        ConvertToRPCLayer(pkg.Layer),
+			FilePath:     pkg.FilePath,
+			DependsOn:    pkg.DependsOn,
+			Digest:       pkg.Digest.String(),
+			Relationship: int32(pkg.Relationship),
+			Indirect:     pkg.Indirect,
+			Maintainer:   pkg.Maintainer,
+			AnalyzedBy:   string(pkg.AnalyzedBy),
 		})
 	}
 	return rpcPkgs
@@ -146,10 +151,7 @@ func ConvertToRPCCode(code ftypes.Code) *common.Code {
 func ConvertToRPCSecrets(secrets []ftypes.Secret) []*common.Secret {
 	var rpcSecrets []*common.Secret
 	for _, s := range secrets {
-		rpcSecrets = append(rpcSecrets, &common.Secret{
-			Filepath: s.FilePath,
-			Findings: ConvertToRPCSecretFindings(s.Findings),
-		})
+		rpcSecrets = append(rpcSecrets, ConvertToRPCSecret(&s))
 	}
 	return rpcSecrets
 }
@@ -167,6 +169,7 @@ func ConvertToRPCSecretFindings(findings []ftypes.SecretFinding) []*common.Secre
 			Code:      ConvertToRPCCode(f.Code),
 			Match:     f.Match,
 			Layer:     ConvertToRPCLayer(f.Layer),
+			Offset:    int32(f.Offset),
 		})
 	}
 	return rpcFindings
@@ -208,26 +211,28 @@ func ConvertFromRPCPkgs(rpcPkgs []*common.Package) []ftypes.Package {
 	var pkgs []ftypes.Package
 	for _, pkg := range rpcPkgs {
 		pkgs = append(pkgs, ftypes.Package{
-			ID:         pkg.Id,
-			Name:       pkg.Name,
-			Version:    pkg.Version,
-			Release:    pkg.Release,
-			Epoch:      int(pkg.Epoch),
-			Arch:       pkg.Arch,
-			Identifier: ConvertFromRPCPkgIdentifier(pkg.Identifier),
-			Dev:        pkg.Dev,
-			SrcName:    pkg.SrcName,
-			SrcVersion: pkg.SrcVersion,
-			SrcRelease: pkg.SrcRelease,
-			SrcEpoch:   int(pkg.SrcEpoch),
-			Licenses:   pkg.Licenses,
-			Locations:  ConvertFromRPCLocation(pkg.Locations),
-			Layer:      ConvertFromRPCLayer(pkg.Layer),
-			FilePath:   pkg.FilePath,
-			DependsOn:  pkg.DependsOn,
-			Digest:     digest.Digest(pkg.Digest),
-			Indirect:   pkg.Indirect,
-			Maintainer: pkg.Maintainer,
+			ID:           pkg.Id,
+			Name:         pkg.Name,
+			Version:      pkg.Version,
+			Release:      pkg.Release,
+			Epoch:        int(pkg.Epoch),
+			Arch:         pkg.Arch,
+			Identifier:   ConvertFromRPCPkgIdentifier(pkg.Identifier),
+			Dev:          pkg.Dev,
+			SrcName:      pkg.SrcName,
+			SrcVersion:   pkg.SrcVersion,
+			SrcRelease:   pkg.SrcRelease,
+			SrcEpoch:     int(pkg.SrcEpoch),
+			Licenses:     pkg.Licenses,
+			Locations:    ConvertFromRPCLocation(pkg.Locations),
+			Layer:        ConvertFromRPCLayer(pkg.Layer),
+			FilePath:     pkg.FilePath,
+			DependsOn:    pkg.DependsOn,
+			Digest:       digest.Digest(pkg.Digest),
+			Relationship: ftypes.Relationship(pkg.Relationship),
+			Indirect:     pkg.Indirect,
+			Maintainer:   pkg.Maintainer,
+			AnalyzedBy:   ftypes.AnalyzerType(pkg.AnalyzedBy),
 		})
 	}
 	return pkgs
@@ -299,11 +304,16 @@ func ConvertToRPCVulns(vulns []types.DetectedVulnerability) []*common.Vulnerabil
 		}
 
 		var customAdvisoryData, customVulnData *structpb.Value
+		var builder strings.Builder
 		if vuln.Custom != nil {
-			customAdvisoryData, _ = structpb.NewValue(vuln.Custom) // nolint: errcheck
+			builder.Reset()
+			_ = jsonv2.MarshalWrite(&builder, vuln.Custom) // nolint: errcheck
+			customAdvisoryData = structpb.NewStringValue(builder.String())
 		}
 		if vuln.Vulnerability.Custom != nil {
-			customVulnData, _ = structpb.NewValue(vuln.Vulnerability.Custom) // nolint: errcheck
+			builder.Reset()
+			_ = jsonv2.MarshalWrite(&builder, vuln.Vulnerability.Custom) // nolint: errcheck
+			customVulnData = structpb.NewStringValue(builder.String())
 		}
 
 		rpcVulns = append(rpcVulns, &common.Vulnerability{
@@ -349,6 +359,7 @@ func ConvertToRPCMisconfs(misconfs []types.DetectedMisconfiguration) []*common.D
 			Type:          m.Type,
 			Id:            m.ID,
 			AvdId:         m.AVDID,
+			Aliases:       m.Aliases,
 			Title:         m.Title,
 			Description:   m.Description,
 			Message:       m.Message,
@@ -369,6 +380,7 @@ func ConvertToRPCMisconfs(misconfs []types.DetectedMisconfiguration) []*common.D
 // ConvertToRPCLayer returns common.Layer
 func ConvertToRPCLayer(layer ftypes.Layer) *common.Layer {
 	return &common.Layer{
+		Size:      layer.Size,
 		Digest:    layer.Digest,
 		DiffId:    layer.DiffID,
 		CreatedBy: layer.CreatedBy,
@@ -396,6 +408,10 @@ func ConvertToRPCCauseMetadata(cause ftypes.CauseMetadata) *common.CauseMetadata
 		StartLine: int32(cause.StartLine),
 		EndLine:   int32(cause.EndLine),
 		Code:      ConvertToRPCCode(cause.Code),
+		RenderedCause: &common.RenderedCause{
+			Raw:         cause.RenderedCause.Raw,
+			Highlighted: cause.RenderedCause.Highlighted,
+		},
 	}
 }
 
@@ -496,7 +512,7 @@ func ConvertFromRPCDetectedSecrets(rpcFindings []*common.SecretFinding) []types.
 	if len(rpcFindings) == 0 {
 		return nil
 	}
-	return lo.Map(ConvertFromRPCSecretFindings(rpcFindings), func(s ftypes.SecretFinding, _ int) types.DetectedSecret {
+	return xslices.Map(ConvertFromRPCSecretFindings(rpcFindings), func(s ftypes.SecretFinding) types.DetectedSecret {
 		return types.DetectedSecret(s)
 	})
 }
@@ -513,6 +529,7 @@ func ConvertFromRPCSecretFindings(rpcFindings []*common.SecretFinding) []ftypes.
 			EndLine:   int(finding.EndLine),
 			Code:      ConvertFromRPCCode(finding.Code),
 			Match:     finding.Match,
+			Offset:    int(finding.Offset),
 			Layer: ftypes.Layer{
 				Digest:    finding.Layer.Digest,
 				DiffID:    finding.Layer.DiffId,
@@ -525,11 +542,8 @@ func ConvertFromRPCSecretFindings(rpcFindings []*common.SecretFinding) []ftypes.
 
 func ConvertFromRPCSecrets(recSecrets []*common.Secret) []ftypes.Secret {
 	var secrets []ftypes.Secret
-	for _, secret := range recSecrets {
-		secrets = append(secrets, ftypes.Secret{
-			FilePath: secret.Filepath,
-			Findings: ConvertFromRPCSecretFindings(secret.Findings),
-		})
+	for _, recSecret := range recSecrets {
+		secrets = append(secrets, *ConvertFromRPCSecret(recSecret))
 	}
 	return secrets
 }
@@ -588,10 +602,19 @@ func ConvertFromRPCVulns(rpcVulns []*common.Vulnerability) []types.DetectedVulne
 
 		var lastModifiedDate, publishedDate *time.Time
 		if vuln.LastModifiedDate != nil {
-			lastModifiedDate = lo.ToPtr(vuln.LastModifiedDate.AsTime())
+			lastModifiedDate = new(vuln.LastModifiedDate.AsTime())
 		}
 		if vuln.PublishedDate != nil {
-			publishedDate = lo.ToPtr(vuln.PublishedDate.AsTime())
+			publishedDate = new(vuln.PublishedDate.AsTime())
+		}
+
+		// Handle custom data conversion from protobuf.Value
+		var customVulnData, customAdvisoryData any
+		if vuln.CustomVulnData != nil {
+			customVulnData = vuln.CustomVulnData.AsInterface()
+		}
+		if vuln.CustomAdvisoryData != nil {
+			customAdvisoryData = vuln.CustomAdvisoryData.AsInterface()
 		}
 
 		vulns = append(vulns, types.DetectedVulnerability{
@@ -613,13 +636,13 @@ func ConvertFromRPCVulns(rpcVulns []*common.Vulnerability) []types.DetectedVulne
 				CweIDs:           vuln.CweIds,
 				LastModifiedDate: lastModifiedDate,
 				PublishedDate:    publishedDate,
-				Custom:           vuln.CustomVulnData.AsInterface(),
+				Custom:           customVulnData,
 				VendorSeverity:   vendorSeverityMap,
 			},
 			Layer:          ConvertFromRPCLayer(vuln.Layer),
 			SeveritySource: dbTypes.SourceID(vuln.SeveritySource),
 			PrimaryURL:     vuln.PrimaryUrl,
-			Custom:         vuln.CustomAdvisoryData.AsInterface(),
+			Custom:         customAdvisoryData,
 			DataSource:     ConvertFromRPCDataSource(vuln.DataSource),
 		})
 	}
@@ -634,6 +657,7 @@ func ConvertFromRPCMisconfs(rpcMisconfs []*common.DetectedMisconfiguration) []ty
 			Type:          rpcMisconf.Type,
 			ID:            rpcMisconf.Id,
 			AVDID:         rpcMisconf.AvdId,
+			Aliases:       rpcMisconf.Aliases,
 			Title:         rpcMisconf.Title,
 			Description:   rpcMisconf.Description,
 			Message:       rpcMisconf.Message,
@@ -651,12 +675,13 @@ func ConvertFromRPCMisconfs(rpcMisconfs []*common.DetectedMisconfiguration) []ty
 	return misconfs
 }
 
-// ConvertFromRPCLayer converts *common.Layer to fanal.Layer
+// ConvertFromRPCLayer converts *common.Layer to ftypes.Layer
 func ConvertFromRPCLayer(rpcLayer *common.Layer) ftypes.Layer {
 	if rpcLayer == nil {
 		return ftypes.Layer{}
 	}
 	return ftypes.Layer{
+		Size:      rpcLayer.Size,
 		Digest:    rpcLayer.Digest,
 		DiffID:    rpcLayer.DiffId,
 		CreatedBy: rpcLayer.CreatedBy,
@@ -685,12 +710,23 @@ func ConvertFromRPCCauseMetadata(rpcCause *common.CauseMetadata) ftypes.CauseMet
 		return ftypes.CauseMetadata{}
 	}
 	return ftypes.CauseMetadata{
-		Resource:  rpcCause.Resource,
-		Provider:  rpcCause.Provider,
-		Service:   rpcCause.Service,
-		StartLine: int(rpcCause.StartLine),
-		EndLine:   int(rpcCause.EndLine),
-		Code:      ConvertFromRPCCode(rpcCause.Code),
+		Resource:      rpcCause.Resource,
+		Provider:      rpcCause.Provider,
+		Service:       rpcCause.Service,
+		StartLine:     int(rpcCause.StartLine),
+		EndLine:       int(rpcCause.EndLine),
+		Code:          ConvertFromRPCCode(rpcCause.Code),
+		RenderedCause: ConvertFromRPCRenderedCause(rpcCause.RenderedCause),
+	}
+}
+
+func ConvertFromRPCRenderedCause(rendered *common.RenderedCause) ftypes.RenderedCause {
+	if rendered == nil {
+		return ftypes.RenderedCause{}
+	}
+	return ftypes.RenderedCause{
+		Raw:         rendered.Raw,
+		Highlighted: rendered.Highlighted,
 	}
 }
 
@@ -794,6 +830,7 @@ func ConvertFromRPCPutArtifactRequest(req *cache.PutArtifactRequest) ftypes.Arti
 		DockerVersion:   req.ArtifactInfo.DockerVersion,
 		OS:              req.ArtifactInfo.Os,
 		HistoryPackages: ConvertFromRPCPkgs(req.ArtifactInfo.HistoryPackages),
+		Secret:          ConvertFromRPCSecret(req.ArtifactInfo.Secret),
 	}
 }
 
@@ -801,6 +838,7 @@ func ConvertFromRPCPutArtifactRequest(req *cache.PutArtifactRequest) ftypes.Arti
 func ConvertFromRPCPutBlobRequest(req *cache.PutBlobRequest) ftypes.BlobInfo {
 	return ftypes.BlobInfo{
 		SchemaVersion:     int(req.BlobInfo.SchemaVersion),
+		Size:              req.BlobInfo.Size,
 		Digest:            req.BlobInfo.Digest,
 		DiffID:            req.BlobInfo.DiffId,
 		OS:                ConvertFromRPCOS(req.BlobInfo.Os),
@@ -808,11 +846,13 @@ func ConvertFromRPCPutBlobRequest(req *cache.PutBlobRequest) ftypes.BlobInfo {
 		PackageInfos:      ConvertFromRPCPackageInfos(req.BlobInfo.PackageInfos),
 		Applications:      ConvertFromRPCApplications(req.BlobInfo.Applications),
 		Misconfigurations: ConvertFromRPCMisconfigurations(req.BlobInfo.Misconfigurations),
-		OpaqueDirs:        req.BlobInfo.OpaqueDirs,
-		WhiteoutFiles:     req.BlobInfo.WhiteoutFiles,
 		CustomResources:   ConvertFromRPCCustomResources(req.BlobInfo.CustomResources),
 		Secrets:           ConvertFromRPCSecrets(req.BlobInfo.Secrets),
 		Licenses:          ConvertFromRPCLicenseFiles(req.BlobInfo.Licenses),
+		CreatedBy:         req.BlobInfo.CreatedBy,
+		OpaqueDirs:        req.BlobInfo.OpaqueDirs,
+		WhiteoutFiles:     req.BlobInfo.WhiteoutFiles,
+		BuildInfo:         ConvertFromRPCBuildInfo(req.BlobInfo.BuildInfo),
 	}
 }
 
@@ -837,6 +877,18 @@ func ConvertToRPCRepository(repo *ftypes.Repository) *common.Repository {
 	}
 }
 
+// ConvertFromRPCBuildInfo converts *common.BuildInfo to *ftypes.BuildInfo
+func ConvertFromRPCBuildInfo(buildInfo *common.BuildInfo) *ftypes.BuildInfo {
+	if buildInfo == nil {
+		return nil
+	}
+	return &ftypes.BuildInfo{
+		ContentSets: buildInfo.ContentSets,
+		Nvr:         buildInfo.Nvr,
+		Arch:        buildInfo.Arch,
+	}
+}
+
 // ConvertToRPCArtifactInfo returns PutArtifactRequest
 func ConvertToRPCArtifactInfo(imageID string, imageInfo ftypes.ArtifactInfo) *cache.PutArtifactRequest {
 
@@ -854,6 +906,7 @@ func ConvertToRPCArtifactInfo(imageID string, imageInfo ftypes.ArtifactInfo) *ca
 			DockerVersion:   imageInfo.DockerVersion,
 			Os:              imageInfo.OS,
 			HistoryPackages: ConvertToRPCPkgs(imageInfo.HistoryPackages),
+			Secret:          ConvertToRPCSecret(imageInfo.Secret),
 		},
 	}
 }
@@ -911,6 +964,7 @@ func ConvertToRPCPutBlobRequest(diffID string, blobInfo ftypes.BlobInfo) *cache.
 		DiffId: diffID,
 		BlobInfo: &cache.BlobInfo{
 			SchemaVersion:     ftypes.BlobJSONSchemaVersion,
+			Size:              blobInfo.Size,
 			Digest:            blobInfo.Digest,
 			DiffId:            blobInfo.DiffID,
 			Os:                ConvertToRPCOS(blobInfo.OS),
@@ -918,12 +972,26 @@ func ConvertToRPCPutBlobRequest(diffID string, blobInfo ftypes.BlobInfo) *cache.
 			PackageInfos:      packageInfos,
 			Applications:      applications,
 			Misconfigurations: misconfigurations,
-			OpaqueDirs:        blobInfo.OpaqueDirs,
-			WhiteoutFiles:     blobInfo.WhiteoutFiles,
 			CustomResources:   customResources,
 			Secrets:           ConvertToRPCSecrets(blobInfo.Secrets),
 			Licenses:          ConvertToRPCLicenseFiles(blobInfo.Licenses),
+			CreatedBy:         blobInfo.CreatedBy,
+			OpaqueDirs:        blobInfo.OpaqueDirs,
+			WhiteoutFiles:     blobInfo.WhiteoutFiles,
+			BuildInfo:         ConvertToRPCBuildInfo(blobInfo.BuildInfo),
 		},
+	}
+}
+
+// ConvertToRPCBuildInfo converts *ftypes.BuildInfo to *common.BuildInfo
+func ConvertToRPCBuildInfo(buildInfo *ftypes.BuildInfo) *common.BuildInfo {
+	if buildInfo == nil {
+		return nil
+	}
+	return &common.BuildInfo{
+		ContentSets: buildInfo.ContentSets,
+		Nvr:         buildInfo.Nvr,
+		Arch:        buildInfo.Arch,
 	}
 }
 
@@ -950,10 +1018,10 @@ func ConvertToMissingBlobsRequest(imageID string, layerIDs []string) *cache.Miss
 }
 
 // ConvertToRPCScanResponse converts types.Result to ScanResponse
-func ConvertToRPCScanResponse(results types.Results, fos ftypes.OS) *scanner.ScanResponse {
+func ConvertToRPCScanResponse(response types.ScanResponse) *scanner.ScanResponse {
 	var rpcResults []*scanner.Result
-	for _, result := range results {
-		secretFindings := lo.Map(result.Secrets, func(s types.DetectedSecret, _ int) ftypes.SecretFinding {
+	for _, result := range response.Results {
+		secretFindings := xslices.Map(result.Secrets, func(s types.DetectedSecret) ftypes.SecretFinding {
 			return ftypes.SecretFinding(s)
 		})
 		rpcResults = append(rpcResults, &scanner.Result{
@@ -970,8 +1038,9 @@ func ConvertToRPCScanResponse(results types.Results, fos ftypes.OS) *scanner.Sca
 	}
 
 	return &scanner.ScanResponse{
-		Os:      ConvertToRPCOS(fos),
+		Os:      ConvertToRPCOS(response.OS),
 		Results: rpcResults,
+		Layers:  xslices.Map(response.Layers, ConvertToRPCLayer),
 	}
 }
 
@@ -1014,4 +1083,26 @@ func ConvertFromDeleteBlobsRequest(deleteBlobsRequest *cache.DeleteBlobsRequest)
 		return []string{}
 	}
 	return deleteBlobsRequest.GetBlobIds()
+}
+
+// ConvertFromRPCSecret converts common.Secret to fanal.Secret
+func ConvertFromRPCSecret(rpcSecret *common.Secret) *ftypes.Secret {
+	if rpcSecret == nil {
+		return nil
+	}
+	return &ftypes.Secret{
+		FilePath: rpcSecret.Filepath,
+		Findings: ConvertFromRPCSecretFindings(rpcSecret.Findings),
+	}
+}
+
+// ConvertToRPCSecret converts fanal.Secret to common.Secret
+func ConvertToRPCSecret(secret *ftypes.Secret) *common.Secret {
+	if secret == nil {
+		return nil
+	}
+	return &common.Secret{
+		Filepath: secret.FilePath,
+		Findings: ConvertToRPCSecretFindings(secret.Findings),
+	}
 }

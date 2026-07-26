@@ -1,7 +1,6 @@
 package remote
 
 import (
-	"context"
 	"encoding/base64"
 	"fmt"
 	"net/http"
@@ -52,7 +51,7 @@ func setupDockerConfig(t *testing.T, content string) {
 	cd := setupConfigDir(t)
 	p := filepath.Join(cd, "config.json")
 
-	err := os.WriteFile(p, []byte(content), 0600)
+	err := os.WriteFile(p, []byte(content), 0o600)
 	require.NoError(t, err)
 }
 
@@ -300,7 +299,7 @@ func TestGet(t *testing.T) {
 				setupDockerConfig(t, tt.args.config)
 			}
 
-			_, err = Get(context.Background(), n, tt.args.option)
+			_, err = Get(t.Context(), n, tt.args.option)
 			if tt.wantErr != "" {
 				assert.ErrorContains(t, err, tt.wantErr, err)
 				return
@@ -357,7 +356,7 @@ func TestUserAgents(t *testing.T) {
 	n, err := name.ParseReference(fmt.Sprintf("%s/library/alpine:3.10", serverAddr))
 	require.NoError(t, err)
 
-	_, err = Get(context.Background(), n, types.RegistryOptions{
+	_, err = Get(t.Context(), n, types.RegistryOptions{
 		Credentials: []types.Credential{
 			{
 				Username: "test",
@@ -369,8 +368,8 @@ func TestUserAgents(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, tracker.agents, 1)
-	ok := tracker.agents.Contains(fmt.Sprintf("trivy/%s go-containerregistry", app.Version()))
-	require.True(t, ok, `user-agent header equals to "trivy/dev go-containerregistry"`)
+	ok := tracker.agents.Contains(fmt.Sprintf("trivy/%s", app.Version()))
+	require.True(t, ok, `user-agent header equals to "trivy/dev"`)
 }
 
 func localImage(t *testing.T) v1.Image {

@@ -1,8 +1,8 @@
 package npm
 
 import (
+	"context"
 	"fmt"
-	"io"
 	"maps"
 	"path"
 	"slices"
@@ -12,13 +12,14 @@ import (
 	"github.com/samber/lo"
 	"golang.org/x/xerrors"
 
-	"github.com/aquasecurity/jfather"
 	"github.com/aquasecurity/trivy/pkg/dependency"
+	"github.com/aquasecurity/trivy/pkg/dependency/parser/nodejs/packagejson"
 	"github.com/aquasecurity/trivy/pkg/dependency/parser/utils"
 	ftypes "github.com/aquasecurity/trivy/pkg/fanal/types"
 	"github.com/aquasecurity/trivy/pkg/log"
 	"github.com/aquasecurity/trivy/pkg/set"
 	xio "github.com/aquasecurity/trivy/pkg/x/io"
+	xjson "github.com/aquasecurity/trivy/pkg/x/json"
 )
 
 const nodeModulesDir = "node_modules"
@@ -34,23 +35,24 @@ type Dependency struct {
 	Dependencies map[string]Dependency `json:"dependencies"`
 	Requires     map[string]string     `json:"requires"`
 	Resolved     string                `json:"resolved"`
-	StartLine    int
-	EndLine      int
+	xjson.Location
 }
 
 type Package struct {
-	Name                 string            `json:"name"`
-	Version              string            `json:"version"`
-	Dependencies         map[string]string `json:"dependencies"`
-	OptionalDependencies map[string]string `json:"optionalDependencies"`
-	DevDependencies      map[string]string `json:"devDependencies"`
-	PeerDependencies     map[string]string `json:"peerDependencies"`
-	Resolved             string            `json:"resolved"`
-	Dev                  bool              `json:"dev"`
-	Link                 bool              `json:"link"`
-	Workspaces           []string          `json:"workspaces"`
-	StartLine            int
-	EndLine              int
+	Name    string `json:"name"`
+	Version string `json:"version"`
+	// License is reused from packagejson because npm copies this field from package.json.
+	// Modern npm versions normalize it, but legacy lockfiles still contain object/array shapes.
+	License              packagejson.License `json:"license"`
+	Dependencies         map[string]string   `json:"dependencies"`
+	OptionalDependencies map[string]string   `json:"optionalDependencies"`
+	DevDependencies      map[string]string   `json:"devDependencies"`
+	PeerDependencies     map[string]string   `json:"peerDependencies"`
+	Resolved             string              `json:"resolved"`
+	Dev                  bool                `json:"dev"`
+	Link                 bool                `json:"link"`
+	Workspaces           any                 `json:"workspaces"`
+	xjson.Location
 }
 
 type Parser struct {
@@ -63,13 +65,9 @@ func NewParser() *Parser {
 	}
 }
 
-func (p *Parser) Parse(r xio.ReadSeekerAt) ([]ftypes.Package, []ftypes.Dependency, error) {
+func (p *Parser) Parse(_ context.Context, r xio.ReadSeekerAt) ([]ftypes.Package, []ftypes.Dependency, error) {
 	var lockFile LockFile
-	input, err := io.ReadAll(r)
-	if err != nil {
-		return nil, nil, xerrors.Errorf("read error: %w", err)
-	}
-	if err := jfather.Unmarshal(input, &lockFile); err != nil {
+	if err := xjson.UnmarshalRead(r, &lockFile); err != nil {
 		return nil, nil, xerrors.Errorf("decode error: %w", err)
 	}
 
@@ -117,10 +115,6 @@ func (p *Parser) parseV2(packages map[string]Package) ([]ftypes.Package, []ftype
 		}
 
 		pkgID := packageID(pkgName, pkg.Version)
-		location := ftypes.Location{
-			StartLine: pkg.StartLine,
-			EndLine:   pkg.EndLine,
-		}
 
 		var ref ftypes.ExternalRef
 		if pkg.Resolved != "" {
@@ -145,21 +139,29 @@ func (p *Parser) parseV2(packages map[string]Package) ([]ftypes.Package, []ftype
 				sortExternalReferences(savedPkg.ExternalReferences)
 			}
 
-			savedPkg.Locations = append(savedPkg.Locations, location)
+			savedPkg.Locations = append(savedPkg.Locations, ftypes.Location(pkg.Location))
 			sort.Sort(savedPkg.Locations)
+
+			// If for some reason license is missing in savedPkg, but exists in the current pkg, add it.
+			if licenses := pkg.License.Names(); len(savedPkg.Licenses) == 0 && len(licenses) > 0 {
+				savedPkg.Licenses = licenses
+			}
 
 			pkgs[pkgID] = savedPkg
 			continue
 		}
 
+		licenses := pkg.License.Names()
+
 		newPkg := ftypes.Package{
 			ID:                 pkgID,
 			Name:               pkgName,
 			Version:            pkg.Version,
+			Licenses:           licenses,
 			Relationship:       lo.Ternary(pkgIndirect, ftypes.RelationshipIndirect, ftypes.RelationshipDirect),
 			Dev:                pkg.Dev,
 			ExternalReferences: lo.Ternary(ref.URL != "", []ftypes.ExternalRef{ref}, nil),
-			Locations:          []ftypes.Location{location},
+			Locations:          []ftypes.Location{ftypes.Location(pkg.Location)},
 		}
 		pkgs[pkgID] = newPkg
 
@@ -217,7 +219,7 @@ func (p *Parser) resolveLinks(packages map[string]Package) {
 		rootPkg.Dependencies = make(map[string]string)
 	}
 
-	workspaces := rootPkg.Workspaces
+	workspaces := packagejson.ParseWorkspaces(rootPkg.Workspaces)
 	// Changing the map during the map iteration causes unexpected behavior,
 	// so we need to iterate over the cloned `packages` map, but change the original `packages` map.
 	for pkgPath, pkg := range maps.Clone(packages) {
@@ -266,8 +268,8 @@ func findDependsOn(pkgPath, depName string, packages map[string]Package) (string
 	//    - "node_modules/body-parser/node_modules/debug/node_modules/ms"
 	//    - "node_modules/body-parser/node_modules/ms"
 	//    - "node_modules/ms"
-	for i := len(paths) - 1; i >= 0; i-- {
-		if paths[i] != nodeModulesDir {
+	for i, v := range slices.Backward(paths) {
+		if v != nodeModulesDir {
 			continue
 		}
 		modulePath := joinPaths(paths[:i+1]...)
@@ -304,12 +306,7 @@ func (p *Parser) parseV1(dependencies map[string]Dependency, versions map[string
 					URL:  dep.Resolved,
 				},
 			},
-			Locations: []ftypes.Location{
-				{
-					StartLine: dep.StartLine,
-					EndLine:   dep.EndLine,
-				},
-			},
+			Locations: []ftypes.Location{ftypes.Location(dep.Location)},
 		}
 		pkgs = append(pkgs, pkg)
 
@@ -359,7 +356,15 @@ func (p *Parser) pkgNameFromPath(pkgPath string) string {
 	// node_modules/function1
 	// node_modules/nested_func/node_modules/debug
 	if index := strings.LastIndex(pkgPath, nodeModulesDir); index != -1 {
-		return pkgPath[index+len(nodeModulesDir)+1:]
+		pkgName := pkgPath[index+len(nodeModulesDir):]
+		pkgName = strings.TrimPrefix(pkgName, "/")
+
+		if pkgName == "" {
+			p.logger.Warn("Invalid package-lock.json file. Package path doesn't have package name suffix", log.String("pkg_path", pkgPath))
+			return ""
+		}
+
+		return pkgName
 	}
 	p.logger.Warn("Package path doesn't have `node_modules` prefix", log.String("pkg_path", pkgPath))
 	return pkgPath
@@ -394,28 +399,6 @@ func isIndirectPkg(pkgPath string, directDeps set.Set[string]) bool {
 
 func joinPaths(paths ...string) string {
 	return strings.Join(paths, "/")
-}
-
-// UnmarshalJSONWithMetadata needed to detect start and end lines of deps for v1
-func (t *Dependency) UnmarshalJSONWithMetadata(node jfather.Node) error {
-	if err := node.Decode(&t); err != nil {
-		return err
-	}
-	// Decode func will overwrite line numbers if we save them first
-	t.StartLine = node.Range().Start.Line
-	t.EndLine = node.Range().End.Line
-	return nil
-}
-
-// UnmarshalJSONWithMetadata needed to detect start and end lines of deps for v2 or newer
-func (t *Package) UnmarshalJSONWithMetadata(node jfather.Node) error {
-	if err := node.Decode(&t); err != nil {
-		return err
-	}
-	// Decode func will overwrite line numbers if we save them first
-	t.StartLine = node.Range().Start.Line
-	t.EndLine = node.Range().End.Line
-	return nil
 }
 
 func packageID(name, version string) string {

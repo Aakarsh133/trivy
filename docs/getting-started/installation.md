@@ -16,7 +16,7 @@ Use one of the official Trivy images:
 | AWS Elastic Container Registry (ECR) | `public.ecr.aws/aquasecurity/trivy` | https://gallery.ecr.aws/aquasecurity/trivy |
 
 !!! Tip
-    It is advisable to mount a persistent [cache dir](../docs/configuration/cache.md) on the host into the Trivy container.
+    It is advisable to mount a persistent [cache dir](../guide/configuration/cache.md) on the host into the Trivy container.
 
 !!! Tip
     For scanning container images with Trivy, mount the container engine socket from the host into the Trivy container.
@@ -111,6 +111,18 @@ References:
 - <https://gitlab.archlinux.org/archlinux/packaging/packages/trivy/-/blob/main/PKGBUILD>
 
 
+## OpenSUSE (Community)
+
+OpenSUSE Package Repository.
+
+```bash
+sudo zypper install trivy
+```
+
+References: 
+- <https://software.opensuse.org/package/trivy>
+
+
 ## MacPorts (Community)
 
 [MacPorts](https://www.macports.org) for macOS.
@@ -149,7 +161,7 @@ Nix package manager for Linux and macOS.
 
 References: 
 
--  https://github.com/NixOS/nixpkgs/blob/master/pkgs/tools/admin/trivy/default.nix
+-  https://github.com/NixOS/nixpkgs/blob/master/pkgs/by-name/tr/trivy/package.nix
 
 ## FreeBSD (Official)
 
@@ -167,7 +179,7 @@ See their respective documentation for more information of how to install them a
 - [asdf](https://asdf-vm.com/guide/getting-started.html)
 - [mise](https://mise.jdx.dev/getting-started.html)
 
-The plugin used by both tools is developped [here](https://github.com/zufardhiyaulhaq/asdf-trivy)
+The plugin used by both tools is developed [here](https://github.com/zufardhiyaulhaq/asdf-trivy)
 
 
 === "asdf"

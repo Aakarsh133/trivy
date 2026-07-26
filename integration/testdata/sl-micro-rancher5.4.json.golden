@@ -1,9 +1,15 @@
 {
   "SchemaVersion": 2,
+  "Trivy": {
+    "Version": "dev"
+  },
+  "ReportID": "017b7d41-e09f-7000-80ea-000000000001",
   "CreatedAt": "2021-08-25T12:20:30.000000005Z",
+  "ArtifactID": "sha256:f3d716e4652bf4a60bf4289eace7bb2b46878fa9461c86b12b4c059126563aee",
   "ArtifactName": "testdata/fixtures/images/sle-micro-rancher-5.4_ndb.tar.gz",
   "ArtifactType": "container_image",
   "Metadata": {
+    "Size": 709748736,
     "OS": {
       "Family": "slem",
       "Name": "5.4"
@@ -12,6 +18,10 @@
     "DiffIDs": [
       "sha256:7cdd3aec849d122d63dc83a5e1e2fb89b341c67b03e25979131ca335a463bb57"
     ],
+    "RepoTags": [
+      "ghcr.io/aquasecurity/trivy-test-images:sle-micro-rancher-5.4_ndb"
+    ],
+    "Reference": "ghcr.io/aquasecurity/trivy-test-images:sle-micro-rancher-5.4_ndb",
     "ImageConfig": {
       "architecture": "amd64",
       "author": "SUSE LLC (https://www.suse.com/)",
@@ -57,7 +67,14 @@
           "org.suse.reference": "registry.suse.com/suse/sle-micro-rancher/5.4:%PKG_VERSION%-%RELEASE"
         }
       }
-    }
+    },
+    "Layers": [
+      {
+        "Size": 709748736,
+        "Digest": "sha256:832d9b8a90d142f11cf1b5d3f0b5d6c099be9b7af791b426138a4205b6ee78de",
+        "DiffID": "sha256:7cdd3aec849d122d63dc83a5e1e2fb89b341c67b03e25979131ca335a463bb57"
+      }
+    ]
   },
   "Results": [
     {

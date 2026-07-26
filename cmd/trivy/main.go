@@ -41,9 +41,11 @@ func run() error {
 		return nil
 	}
 
-	app := commands.NewApp()
-	if err := app.Execute(); err != nil {
-		return err
-	}
-	return nil
+	// Ensure cleanup on exit
+	defer commands.Cleanup()
+
+	// Set up signal handling for graceful shutdown
+	ctx := commands.NotifyContext(context.Background())
+
+	return commands.Run(ctx)
 }

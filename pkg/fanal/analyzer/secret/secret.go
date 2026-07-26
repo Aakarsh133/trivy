@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -25,41 +24,9 @@ var _ analyzer.Initializer = &SecretAnalyzer{}
 
 const version = 1
 
-var (
-	skipFiles = []string{
-		"go.mod",
-		"go.sum",
-		"package-lock.json",
-		"yarn.lock",
-		"pnpm-lock.yaml",
-		"Pipfile.lock",
-		"Gemfile.lock",
-	}
-	skipDirs = []string{
-		".git",
-		"node_modules",
-	}
-	skipExts = []string{
-		".jpg",
-		".png",
-		".gif",
-		".doc",
-		".pdf",
-		".bin",
-		".svg",
-		".socket",
-		".deb",
-		".rpm",
-		".zip",
-		".gz",
-		".gzip",
-		".tar",
-	}
-
-	allowedBinaries = []string{
-		".pyc",
-	}
-)
+var allowedBinaries = []string{
+	".pyc",
+}
 
 func init() {
 	// The scanner will be initialized later via InitScanner()
@@ -79,18 +46,18 @@ type SecretAnalyzer struct {
 func NewSecretAnalyzer(s secret.Scanner, configPath string) *SecretAnalyzer {
 	return &SecretAnalyzer{
 		scanner:    s,
-		configPath: configPath,
+		configPath: cleanPath(configPath),
 	}
 }
 
 // Init initializes and sets a secret scanner
 func (a *SecretAnalyzer) Init(opt analyzer.AnalyzerOptions) error {
-	if opt.SecretScannerOption.ConfigPath == a.configPath && !lo.IsEmpty(a.scanner) {
+	configPath := cleanPath(opt.SecretScannerOption.ConfigPath)
+	if configPath == a.configPath && !lo.IsEmpty(a.scanner) {
 		// This check is for tools importing Trivy and customize analyzers
 		// Never reach here in Trivy OSS
 		return nil
 	}
-	configPath := opt.SecretScannerOption.ConfigPath
 	c, err := secret.ParseConfig(configPath)
 	if err != nil {
 		return xerrors.Errorf("secret config error: %w", err)
@@ -98,6 +65,13 @@ func (a *SecretAnalyzer) Init(opt analyzer.AnalyzerOptions) error {
 	a.scanner = secret.NewScanner(c)
 	a.configPath = configPath
 	return nil
+}
+
+func cleanPath(p string) string {
+	if p == "" {
+		return ""
+	}
+	return filepath.ToSlash(filepath.Clean(p))
 }
 
 func (a *SecretAnalyzer) Analyze(_ context.Context, input analyzer.AnalysisInput) (*analyzer.AnalysisResult, error) {
@@ -111,21 +85,6 @@ func (a *SecretAnalyzer) Analyze(_ context.Context, input analyzer.AnalysisInput
 		log.WithPrefix("secret").Warn("The size of the scanned file is too large. It is recommended to use `--skip-files` for this file to avoid high memory consumption.", log.FilePath(input.FilePath), log.Int64("size (MB)", size/1048576))
 	}
 
-	var content []byte
-
-	if !binary {
-		content, err = io.ReadAll(input.Content)
-		if err != nil {
-			return nil, xerrors.Errorf("read error %s: %w", input.FilePath, err)
-		}
-		content = bytes.ReplaceAll(content, []byte("\r"), []byte(""))
-	} else {
-		content, err = utils.ExtractPrintableBytes(input.Content)
-		if err != nil {
-			return nil, xerrors.Errorf("binary read error %s: %w", input.FilePath, err)
-		}
-	}
-
 	filePath := input.FilePath
 	// Files extracted from the image have an empty input.Dir.
 	// Also, paths to these files do not have "/" prefix.
@@ -134,9 +93,18 @@ func (a *SecretAnalyzer) Analyze(_ context.Context, input analyzer.AnalysisInput
 		filePath = fmt.Sprintf("/%s", filePath)
 	}
 
+	reader := input.Content
+	if binary {
+		content, err := utils.ExtractPrintableBytes(input.Content)
+		if err != nil {
+			return nil, xerrors.Errorf("binary read error %s: %w", input.FilePath, err)
+		}
+		reader = bytes.NewReader(content)
+	}
+
 	result := a.scanner.Scan(secret.ScanArgs{
 		FilePath: filePath,
-		Content:  content,
+		Content:  reader,
 		Binary:   binary,
 	})
 
@@ -150,35 +118,25 @@ func (a *SecretAnalyzer) Analyze(_ context.Context, input analyzer.AnalysisInput
 }
 
 func (a *SecretAnalyzer) Required(filePath string, fi os.FileInfo) bool {
-	// Skip small files
 	if fi.Size() < 10 {
 		return false
 	}
 
-	dir, fileName := filepath.Split(filePath)
-	dir = filepath.ToSlash(dir)
-	dirs := strings.Split(dir, "/")
-
-	// Check if the directory should be skipped
-	for _, skipDir := range skipDirs {
-		if slices.Contains(dirs, skipDir) {
+	// Skip the secret-scanner config file itself.
+	// a.configPath is already cleaned/slash-normalized in Init; filePath is scan-relative
+	// from the walker but may carry native separators on Windows, so normalize it too.
+	// We accept filePath as a path-boundary suffix of configPath to handle the common case
+	// where --secret-config is given relative to CWD (so it carries a scan-root prefix that
+	// the walker strips from filePath). This trades off a rare over-skip (same-basename
+	// file elsewhere in the scan tree) for correctness in the common case.
+	if a.configPath != "" {
+		cleanFile := cleanPath(filePath)
+		if a.configPath == cleanFile || strings.HasSuffix(a.configPath, "/"+cleanFile) {
 			return false
 		}
 	}
 
-	// Check if the file should be skipped
-	if slices.Contains(skipFiles, fileName) {
-		return false
-	}
-
-	// Skip the config file for secret scanning
-	if filepath.Base(a.configPath) == filePath {
-		return false
-	}
-
-	// Check if the file extension should be skipped
-	ext := filepath.Ext(fileName)
-	if slices.Contains(skipExts, ext) {
+	if a.scanner.IsSkipped(filePath) {
 		return false
 	}
 

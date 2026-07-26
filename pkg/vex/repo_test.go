@@ -1,7 +1,6 @@
 package vex_test
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -79,6 +78,24 @@ repositories:
 			product:         bashComponent,
 			wantNotAffected: false,
 		},
+		{
+			// The index entry's location ("../bash-vex.json") points to a file in
+			// the parent of the repository directory. VEX documents are only loaded
+			// from within the repository directory, so the document is not loaded
+			// and the finding is returned unmodified (not affected = false), even
+			// though that file marks it as not_affected.
+			name:     "entry location in a parent directory is not loaded",
+			cacheDir: "testdata/parent-location-repo",
+			configContent: `
+repositories:
+  - name: default
+    url: https://example.com/vex/default
+    enabled: true
+`,
+			vuln:            vuln3,
+			product:         bashComponent,
+			wantNotAffected: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -91,15 +108,15 @@ repositories:
 
 			// Create the vex directory in the temporary directory
 			vexDir := filepath.Join(tmpDir, ".trivy", "vex")
-			err := os.MkdirAll(vexDir, 0755)
+			err := os.MkdirAll(vexDir, 0o755)
 			require.NoError(t, err)
 
 			// Write the config file
 			configPath := filepath.Join(vexDir, "repository.yaml")
-			err = os.WriteFile(configPath, []byte(tt.configContent), 0644)
+			err = os.WriteFile(configPath, []byte(tt.configContent), 0o644)
 			require.NoError(t, err)
 
-			ctx := context.Background()
+			ctx := t.Context()
 			rs, err := vex.NewRepositorySet(ctx, tt.cacheDir)
 			require.NoError(t, err)
 

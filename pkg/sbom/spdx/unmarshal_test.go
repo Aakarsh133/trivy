@@ -1,7 +1,6 @@
 package spdx_test
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"sort"
@@ -201,6 +200,7 @@ func TestUnmarshaler_Unmarshal(t *testing.T) {
 									},
 								},
 								FilePath: "node_modules/yargs-parser/package.json",
+								Digest:   "sha1:69e70ec702f9df4ff64024b5fdea4644f1ce6c97",
 							},
 						},
 					},
@@ -228,6 +228,7 @@ func TestUnmarshaler_Unmarshal(t *testing.T) {
 									},
 								},
 								FilePath: "node_modules/yargs-parser/package.json",
+								Digest:   "sha1:69e70ec702f9df4ff64024b5fdea4644f1ce6c97",
 							},
 						},
 					},
@@ -287,6 +288,7 @@ func TestUnmarshaler_Unmarshal(t *testing.T) {
 								Name:     "co.elastic.apm:apm-agent",
 								Version:  "1.36.0",
 								FilePath: "modules/apm/elastic-apm-agent-1.36.0.jar",
+								Digest:   "sha1:d2a9ad9b159eb650d25add9395c4f4198f200066",
 								Identifier: ftypes.PkgIdentifier{
 									PURL: &packageurl.PackageURL{
 										Type:      packageurl.TypeMaven,
@@ -301,6 +303,7 @@ func TestUnmarshaler_Unmarshal(t *testing.T) {
 								Name:     "co.elastic.apm:apm-agent-cached-lookup-key",
 								Version:  "1.36.0",
 								FilePath: "modules/apm/elastic-apm-agent-1.36.0.jar",
+								Digest:   "sha1:d2a9ad9b159eb650d25add9395c4f4198f200066",
 								Identifier: ftypes.PkgIdentifier{
 									PURL: &packageurl.PackageURL{
 										Type:      packageurl.TypeMaven,
@@ -342,6 +345,33 @@ func TestUnmarshaler_Unmarshal(t *testing.T) {
 			inputFile: "testdata/sad/invalid-purl.json",
 			wantErr:   "purl is missing type or name",
 		},
+		{
+			name:      "happy path package with hash",
+			inputFile: "testdata/happy/package-hashes.json",
+			want: types.SBOM{
+				Applications: []ftypes.Application{
+					{
+						Type: ftypes.NodePkg,
+						Packages: ftypes.Packages{
+							{
+								ID:       "lodash@4.17.21",
+								Name:     "lodash",
+								Version:  "4.17.21",
+								Licenses: []string{"MIT"},
+								Identifier: ftypes.PkgIdentifier{
+									PURL: &packageurl.PackageURL{
+										Type:    packageurl.TypeNPM,
+										Name:    "lodash",
+										Version: "4.17.21",
+									},
+								},
+								Digest: "sha512:bf690311ee7b95e713ba568322e3533f2dd1cb880b189e99d4edef13592b81764daec43e2c54c61d5c558dc5cfb35ecb85b65519e74026ff17675b6f8f916f4a",
+							},
+						},
+					},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -358,7 +388,7 @@ func TestUnmarshaler_Unmarshal(t *testing.T) {
 			}
 
 			var got types.SBOM
-			err = sbomio.NewDecoder(v.BOM).Decode(context.Background(), &got)
+			err = sbomio.NewDecoder(v.BOM).Decode(t.Context(), &got)
 			require.NoError(t, err)
 
 			// Not compare BOM

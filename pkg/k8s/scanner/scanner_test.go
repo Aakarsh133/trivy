@@ -1,7 +1,6 @@
 package scanner
 
 import (
-	"context"
 	"sort"
 	"testing"
 
@@ -171,7 +170,7 @@ func TestScanner_Scan(t *testing.T) {
 								},
 							},
 						},
-						BOMRef: "pkg:oci/kube-apiserver@sha256%3A18e61c783b41758dd391ab901366ec3546b26fae00eef7e223d1f94da808e02f?repository_url=k8s.gcr.io%2Fkube-apiserver",
+						BOMRef: "pkg:oci/kube-apiserver@sha256:18e61c783b41758dd391ab901366ec3546b26fae00eef7e223d1f94da808e02f?repository_url=k8s.gcr.io%2Fkube-apiserver",
 					},
 					Properties: []core.Property{
 						{
@@ -274,10 +273,10 @@ func TestScanner_Scan(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
+			ctx := t.Context()
 			uuid.SetFakeUUID(t, "3ff14136-e09f-4df9-80ea-%012d")
 
-			runner, err := cmd.NewRunner(ctx, flagOpts)
+			runner, err := cmd.NewRunner(ctx, flagOpts, cmd.TargetK8s)
 			require.NoError(t, err)
 
 			scanner := NewScanner(tt.clusterName, runner, flagOpts)
@@ -285,7 +284,7 @@ func TestScanner_Scan(t *testing.T) {
 			require.NoError(t, err)
 
 			gotComponents := lo.Values(got.BOM.Components())
-			require.Equal(t, len(tt.wantComponents), len(gotComponents))
+			require.Len(t, gotComponents, len(tt.wantComponents))
 
 			sort.Slice(gotComponents, func(i, j int) bool {
 				switch {

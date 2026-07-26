@@ -93,6 +93,7 @@ type Repository struct {
 	Username string
 	Password string
 	Token    string // For Bearer
+	Insecure bool
 
 	dir string // Root directory for this VEX repository, $CACHE_DIR/vex/repositories/$REPO_NAME/
 }
@@ -147,7 +148,7 @@ func (r *Repository) Index(ctx context.Context) (Index, error) {
 }
 
 func (r *Repository) downloadManifest(ctx context.Context, opts Options) error {
-	if err := os.MkdirAll(r.dir, 0700); err != nil {
+	if err := os.MkdirAll(r.dir, 0o700); err != nil {
 		return xerrors.Errorf("failed to mkdir: %w", err)
 	}
 
@@ -164,7 +165,9 @@ func (r *Repository) downloadManifest(ctx context.Context, opts Options) error {
 
 	log.DebugContext(ctx, "Downloading the repository metadata...", log.String("url", u.String()), log.String("dst", r.dir))
 	_, err = downloader.Download(ctx, u.String(), filepath.Join(r.dir, manifestFile), ".", downloader.Options{
-		Insecure: opts.Insecure,
+		// if one between global and per-repo insecure option is set,
+		// we set it to true accordingly
+		Insecure: opts.Insecure || r.Insecure,
 		Auth: downloader.Auth{
 			Username: r.Username,
 			Password: r.Password,
@@ -217,17 +220,14 @@ func (r *Repository) needUpdate(ctx context.Context, ver Version, versionDir str
 	now := clock.Clock(ctx).Now()
 	log.DebugContext(ctx, "Checking if the repository needs to be updated...", log.String("repo", r.Name),
 		log.Time("last_update", m.UpdatedAt), log.Duration("update_interval", ver.UpdateInterval.Duration))
-	if now.After(m.UpdatedAt.Add(ver.UpdateInterval.Duration)) {
-		return true
-	}
-	return false
+	return now.After(m.UpdatedAt.Add(ver.UpdateInterval.Duration))
 }
 
 func (r *Repository) download(ctx context.Context, ver Version, dst string, opts Options) error {
 	if len(ver.Locations) == 0 {
 		return xerrors.Errorf("no locations found for version %s", ver.SpecVersion)
 	}
-	if err := os.MkdirAll(dst, 0700); err != nil {
+	if err := os.MkdirAll(dst, 0o700); err != nil {
 		return xerrors.Errorf("failed to mkdir: %w", err)
 	}
 
@@ -242,8 +242,11 @@ func (r *Repository) download(ctx context.Context, ver Version, dst string, opts
 		logger := log.With(log.String("repo", r.Name))
 		logger.DebugContext(ctx, "Downloading repository to cache dir...", log.String("url", loc.URL),
 			log.String("dir", dst), log.String("etag", etags[loc.URL]))
+
 		etag, err := downloader.Download(ctx, loc.URL, dst, ".", downloader.Options{
-			Insecure: opts.Insecure,
+			// if one between global and per-repo insecure option is set,
+			// we set it to true accordingly
+			Insecure: opts.Insecure || r.Insecure,
 			Auth: downloader.Auth{
 				Username: r.Username,
 				Password: r.Password,
